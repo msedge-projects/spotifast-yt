@@ -1,0 +1,9 @@
+﻿[     65 ms] ==== SESSION 1: main IPC session (raw googlevideo URL through mpv default flags) ====
+[    198 ms] mpv: C:\Users\DELL\AppData\Local\Temp\opencode\mpvspike\bin\mpv.exe
+[    203 ms] media url length: 1116 chars; contains expire=True; contains ip=True
+[   1207 ms] START mpv pid=9352
+[   1545 ms] CONNECTED to \\.\pipe\mpv-spike in 132 ms
+[   1554 ms] mpv process start -> pipe connect total: 1343 ms
+[   1608 ms] SEND > {"command":["get_property","idle-active"],"request_id":1}
+[   1756 ms] RECV < {"data":true,"request_id":1,"error":"success"}
+[   2786 ms] SEND > {"command":["get_property","time-pos"],"request_id":2}

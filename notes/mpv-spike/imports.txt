@@ -1,0 +1,113 @@
+﻿DLL imports (47):
+?
+@¡
+O¢
+¼_
+@°
+"±
+A3
+t'
+bÉ
+?É
+É
+E
+PE
+òE
+I
+LI
+`I
+rI
+?I
+àI
+°I
+ìI
+?Ñ
+O
+$O
+ÄO
+RÖ
+x
+O
+DO
+°O
+U
+2U
+>Ü
+lÜ
+$ß
+:ß
+?à
+Xá
+?á
+ á
+Öá
+Xa
+Hä
+Eä
+âä
+
+
+Resolvability (LoadLibraryExW from exe's dir):
+powershell : Unable to find type [NativeDllTest].
+At line:1 char:68
++ ... \mpvspike"; powershell -NoProfile -ExecutionPolicy Bypass -File .\che ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Unable to find type [NativeDllTest].:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+At C:\Users\DELL\AppData\Local\Temp\opencode\mpvspike\check-imports.ps1:52 char:6
++ $h = [NativeDllTest]
++      ~~~~~~~~~~~~~~~
+    + CategoryInfo          : InvalidOperation: (NativeDllTest:TypeName) [], RuntimeException
+
+    + FullyQualifiedErrorId : TypeNotFound
+
+ 
+
+?                                       MISSING
+@¡                                       MISSING
+O¢                                       MISSING
+¼_                                       MISSING
+@°                                       MISSING
+"±                                       MISSING
+A3                                       MISSING
+t'                                       MISSING
+bÉ                                       MISSING
+?É                                       MISSING
+É                                       MISSING
+E                                       MISSING
+PE                                       MISSING
+òE                                       MISSING
+I                                       MISSING
+LI                                       MISSING
+`I                                       MISSING
+rI                                       MISSING
+?I                                       MISSING
+àI                                       MISSING
+°I                                       MISSING
+ìI                                       MISSING
+?Ñ                                       MISSING
+O                                       MISSING
+$O                                       MISSING
+ÄO                                       MISSING
+RÖ                                       MISSING
+x                                       MISSING
+O                                       MISSING
+DO                                       MISSING
+°O                                       MISSING
+U                                       MISSING
+2U                                       MISSING
+>Ü                                       MISSING
+lÜ                                       MISSING
+$ß                                       MISSING
+:ß                                       MISSING
+?à                                       MISSING
+Xá                                       MISSING
+?á                                       MISSING
+ á                                       MISSING
+Öá                                       MISSING
+Xa                                       MISSING
+Hä                                       MISSING
+Eä                                       MISSING
+âä                                       MISSING
+                                         MISSING

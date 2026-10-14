@@ -1,0 +1,2 @@
+[ipc] Starting IPC master
+[ipc] Listening to IPC pipe.

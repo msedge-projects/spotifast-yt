@@ -1,0 +1,169 @@
+[   0.003][v][cplayer] mpv v0.41.0-1154-gec38361c5 Copyright © 2000-2026 mpv/MPlayer/mplayer2 projects
+[   0.016][v][cplayer]  built on Oct 14 2026 00:36:32
+[   0.016][v][cplayer] libplacebo version: v7.375.0 (v7.360.0-153-g1dd0226-dirty)
+[   0.016][v][cplayer] FFmpeg version: N-127521-g2ec8998c3
+[   0.016][v][cplayer] FFmpeg library versions:
+[   0.016][v][cplayer]    libavcodec      63.20.100
+[   0.016][v][cplayer]    libavdevice     63.2.100
+[   0.016][v][cplayer]    libavfilter     12.5.100
+[   0.016][v][cplayer]    libavformat     63.10.100
+[   0.016][v][cplayer]    libavutil       61.14.100
+[   0.016][v][cplayer]    libswresample   7.3.101
+[   0.016][v][cplayer]    libswscale      10.2.100
+[   0.016][v][cplayer] Configuration: -Dprefix=/__w/mpv-winbuild-cmake/mpv-winbuild-cmake/build_x86_64/x86_64-w64-mingw32 -Dlibdir=/__w/mpv-winbuild-cmake/mpv-winbuild-cmake/build_x86_64/x86_64-w64-mingw32/lib -Ddefault_library=shared -Dprefer_static=true -Ddebug=true -Db_ndebug=true -Doptimization=3 -Db_lto=true -Db_lto_mode=thin -Dlibmpv=true -Dpdf-build=enabled -Dlua=enabled -Djavascript=enabled -Dsdl2-gamepad=enabled -Dlibarchive=enabled -Dlibbluray=enabled -Ddvdnav=enabled -Duchardet=enabled -Drubberband=enabled -Dlcms2=enabled -Dopenal=enabled -Dspirv-cross=enabled -Dvulkan=enabled -Dvapoursynth=enabled -Dsubrandr=enabled -Dsixel=enabled -Dgl=enabled -Degl-angle=enabled -Dlibcurl=enabled -Dc_args=-Wno-error=int-conversion --cross-file=/__w/mpv-winbuild-cmake/mpv-winbuild-cmake/build_x86_64/meson_cross.txt
+[   0.017][v][cplayer] List of enabled features: amf build-date cplugins cuda-hwaccel cuda-interop d3d-hwaccel d3d11 d3d9-hwaccel debug direct3d dos-paths dvda dvdnav dxgi-debug-d3d11 egl-angle egl-angle-win32 ffmpeg ffnvcodec gl gl-dxinterop gl-dxinterop-d3d9 gl-win32 glob glob-win32 gpl iconv javascript jpeg lcms2 libarchive libass libavdevice libbluray libcurl libplacebo luajit openal rubberband rubberband-3 sdl2-gamepad shaderc sixel spirv-cross subrandr uchardet vaapi vaapi-win32 vapoursynth vector vk-khr-display vulkan wasapi win32 win32-desktop win32-executable win32-smtc win32-threads zimg zimg-st428 zlib
+[   0.017][v][cplayer] Built with NDEBUG.
+[   0.017][v][cplayer] Command line options: '--idle=yes' '--no-video' '--really-quiet' '--input-ipc-server=\\.\pipe\mpv-spike' '--volume=35' '--log-file=C:\Users\DELL\AppData\Local\Temp\opencode\mpvspike\mpv-s1.log' '--msg-level=all=info,ipc=v'
+[   0.017][v][cplayer] mpv v0.41.0-1154-gec38361c5 Copyright © 2000-2026 mpv/MPlayer/mplayer2 projects
+[   0.017][v][cplayer]  built on Oct 14 2026 00:36:32
+[   0.017][v][cplayer] libplacebo version: v7.375.0 (v7.360.0-153-g1dd0226-dirty)
+[   0.017][v][cplayer] FFmpeg version: N-127521-g2ec8998c3
+[   0.017][v][cplayer] FFmpeg library versions:
+[   0.017][v][cplayer]    libavcodec      63.20.100
+[   0.017][v][cplayer]    libavdevice     63.2.100
+[   0.017][v][cplayer]    libavfilter     12.5.100
+[   0.017][v][cplayer]    libavformat     63.10.100
+[   0.017][v][cplayer]    libavutil       61.14.100
+[   0.017][v][cplayer]    libswresample   7.3.101
+[   0.017][v][cplayer]    libswscale      10.2.100
+[   0.017][v][cplayer] Configuration: -Dprefix=/__w/mpv-winbuild-cmake/mpv-winbuild-cmake/build_x86_64/x86_64-w64-mingw32 -Dlibdir=/__w/mpv-winbuild-cmake/mpv-winbuild-cmake/build_x86_64/x86_64-w64-mingw32/lib -Ddefault_library=shared -Dprefer_static=true -Ddebug=true -Db_ndebug=true -Doptimization=3 -Db_lto=true -Db_lto_mode=thin -Dlibmpv=true -Dpdf-build=enabled -Dlua=enabled -Djavascript=enabled -Dsdl2-gamepad=enabled -Dlibarchive=enabled -Dlibbluray=enabled -Ddvdnav=enabled -Duchardet=enabled -Drubberband=enabled -Dlcms2=enabled -Dopenal=enabled -Dspirv-cross=enabled -Dvulkan=enabled -Dvapoursynth=enabled -Dsubrandr=enabled -Dsixel=enabled -Dgl=enabled -Degl-angle=enabled -Dlibcurl=enabled -Dc_args=-Wno-error=int-conversion --cross-file=/__w/mpv-winbuild-cmake/mpv-winbuild-cmake/build_x86_64/meson_cross.txt
+[   0.017][v][cplayer] List of enabled features: amf build-date cplugins cuda-hwaccel cuda-interop d3d-hwaccel d3d11 d3d9-hwaccel debug direct3d dos-paths dvda dvdnav dxgi-debug-d3d11 egl-angle egl-angle-win32 ffmpeg ffnvcodec gl gl-dxinterop gl-dxinterop-d3d9 gl-win32 glob glob-win32 gpl iconv javascript jpeg lcms2 libarchive libass libavdevice libbluray libcurl libplacebo luajit openal rubberband rubberband-3 sdl2-gamepad shaderc sixel spirv-cross subrandr uchardet vaapi vaapi-win32 vapoursynth vector vk-khr-display vulkan wasapi win32 win32-desktop win32-executable win32-smtc win32-threads zimg zimg-st428 zlib
+[   0.017][v][cplayer] Built with NDEBUG.
+[   0.017][d][global] home path: '' -> 'C:\Users\DELL\AppData\Roaming/mpv'
+[   0.017][d][global] user path: '~~home/' -> 'C:\Users\DELL\AppData\Roaming/mpv'
+[   0.017][d][global] user path: '~~old_home/' -> ''
+[   0.017][d][global] config path: 'encoding-profiles.conf' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/encoding-profiles.conf'
+[   0.017][d][global] config path: 'encoding-profiles.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/encoding-profiles.conf'
+[   0.017][d][global] config path: 'encoding-profiles.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/encoding-profiles.conf'
+[   0.017][d][global] config path: 'mpv.conf' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/mpv.conf'
+[   0.017][d][global] config path: 'config' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/config'
+[   0.017][d][global] config path: 'mpv.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv.conf'
+[   0.017][d][global] config path: 'config' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/config'
+[   0.017][d][global] config path: 'mpv.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/mpv.conf'
+[   0.017][d][global] config path: 'config' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/config'
+[   0.017][v][cplayer] Setting option 'idle' = 'yes' (flags = 8)
+[   0.017][v][cplayer] Setting option 'video' = 'no' (flags = 8)
+[   0.017][v][cplayer] Setting option 'really-quiet' = '' (flags = 8)
+[   0.017][v][cplayer] Setting option 'input-ipc-server' = '\\.\pipe\mpv-spike' (flags = 8)
+[   0.017][v][cplayer] Setting option 'volume' = '35' (flags = 8)
+[   0.017][v][cplayer] Setting option 'log-file' = 'C:\Users\DELL\AppData\Local\Temp\opencode\mpvspike\mpv-s1.log' (flags = 8)
+[   0.017][v][cplayer] Setting option 'msg-level' = 'all=info,ipc=v' (flags = 8)
+[   0.042][d][global] config path: 'input.conf' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/input.conf'
+[   0.042][d][global] config path: 'input.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/input.conf'
+[   0.042][d][global] config path: 'input.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/input.conf'
+[   0.042][d][osc] Loading lua script @osc.lua...
+[   0.042][d][ytdl_hook] Loading lua script @ytdl_hook.lua...
+[   0.042][d][stats] Loading lua script @stats.lua...
+[   0.042][d][console] Loading lua script @console.lua...
+[   0.043][d][auto_profiles] Loading lua script @auto_profiles.lua...
+[   0.044][d][select] Loading lua script @select.lua...
+[   0.044][d][positioning] Loading lua script @positioning.lua...
+[   0.044][d][commands] Loading lua script @commands.lua...
+[   0.044][v][clipboard] Initialized win32 clipboard backend.
+[   0.044][d][osc] loading mp.defaults
+[   0.044][d][ytdl_hook] loading mp.defaults
+[   0.045][d][global] config path: 'scripts' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/scripts'
+[   0.046][d][osc] loading @osc.lua
+[   0.046][d][global] config path: 'scripts' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/scripts'
+[   0.046][d][global] config path: 'scripts' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/scripts'
+[   0.046][v][cplayer] Waiting for scripts...
+[   0.047][d][console] loading mp.defaults
+[   0.047][d][ytdl_hook] loading @ytdl_hook.lua
+[   0.048][d][auto_profiles] loading mp.defaults
+[   0.048][d][console] loading @console.lua
+[   0.048][d][auto_profiles] loading @auto_profiles.lua
+[   0.049][d][ytdl_hook] reading options for ytdl_hook
+[   0.049][d][global] config path: 'script-opts/ytdl_hook.conf' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/script-opts/ytdl_hook.conf'
+[   0.049][d][global] config path: 'script-opts/ytdl_hook.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/script-opts/ytdl_hook.conf'
+[   0.050][d][global] config path: 'script-opts/ytdl_hook.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/script-opts/ytdl_hook.conf'
+[   0.050][d][ytdl_hook] script-opts/ytdl_hook.conf not found.
+[   0.050][d][select] loading mp.defaults
+[   0.051][d][console] reading options for console
+[   0.051][d][positioning] loading mp.defaults
+[   0.051][d][global] config path: 'script-opts/console.conf' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/script-opts/console.conf'
+[   0.052][d][select] loading @select.lua
+[   0.052][d][global] config path: 'script-opts/console.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/script-opts/console.conf'
+[   0.052][d][global] config path: 'script-opts/console.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/script-opts/console.conf'
+[   0.052][d][console] script-opts/console.conf not found.
+[   0.052][d][positioning] loading @positioning.lua
+[   0.053][d][positioning] reading options for positioning
+[   0.053][d][cplayer] Run command: define-section, flags=64, args=[name="input_console", contents="", flags="default"]
+[   0.053][d][cplayer] Run command: enable-section, flags=64, args=[name="input_console", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.053][d][cplayer] Run command: define-section, flags=64, args=[name="input_forced_console", contents="", flags="force"]
+[   0.053][d][commands] loading mp.defaults
+[   0.053][d][cplayer] Run command: enable-section, flags=64, args=[name="input_forced_console", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.053][d][cplayer] Run command: define-section, flags=64, args=[name="showhide", contents="mouse_move script-binding osc/__keybinding1\nmouse_leave script-binding osc/__keybinding2\n", flags="force"]
+[   0.053][d][cplayer] Run command: define-section, flags=64, args=[name="showhide_wc", contents="mouse_move script-binding osc/__keybinding3\nmouse_leave script-binding osc/__keybinding4\n", flags="force"]
+[   0.053][d][global] config path: 'script-opts/positioning.conf' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/script-opts/positioning.conf'
+[   0.053][d][cplayer] Run command: enable-section, flags=64, args=[name="showhide", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.053][d][cplayer] Run command: enable-section, flags=64, args=[name="showhide_wc", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.053][d][global] config path: 'script-opts/positioning.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/script-opts/positioning.conf'
+[   0.053][d][global] config path: 'script-opts/positioning.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/script-opts/positioning.conf'
+[   0.053][d][positioning] script-opts/positioning.conf not found.
+[   0.053][d][cplayer] Run command: define-section, flags=64, args=[name="input", contents="mbtn_left script-binding osc/__keybinding5\nmbtn_mid script-binding osc/__keybinding6\nmbtn_right script-binding osc/__keybinding7\nshift+mbtn_left script-binding osc/__keybinding8\nwheel_up script-binding osc/__keybinding9\nwheel_down script-binding osc/__keybinding10\nmbtn_left_dbl ignore\nshift+mbtn_left_dbl ignore\nmbtn_right_dbl ignore\n", flags="force"]
+[   0.053][d][cplayer] Run command: enable-section, flags=64, args=[name="input", flags=""]
+[   0.053][d][cplayer] Run command: define-section, flags=64, args=[name="window-controls", contents="mbtn_left script-binding osc/__keybinding11\n", flags="force"]
+[   0.053][d][cplayer] Run command: enable-section, flags=64, args=[name="window-controls", flags=""]
+[   0.053][d][cplayer] Run command: define-section, flags=64, args=[name="input_positioning", contents="", flags="default"]
+[   0.053][d][cplayer] Run command: enable-section, flags=64, args=[name="input_positioning", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.053][d][cplayer] Run command: define-section, flags=64, args=[name="input_forced_positioning", contents="", flags="force"]
+[   0.053][d][cplayer] Run command: enable-section, flags=64, args=[name="input_forced_positioning", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.054][d][osc] reading options for osc
+[   0.054][d][commands] loading @commands.lua
+[   0.054][d][select] reading options for select
+[   0.054][d][global] config path: 'script-opts/osc.conf' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/script-opts/osc.conf'
+[   0.054][d][global] config path: 'script-opts/osc.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/script-opts/osc.conf'
+[   0.054][d][global] config path: 'script-opts/osc.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/script-opts/osc.conf'
+[   0.054][d][osc] script-opts/osc.conf not found.
+[   0.054][v][ipc] Starting IPC master
+[   0.079][d][global] config path: 'script-opts/select.conf' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/script-opts/select.conf'
+[   0.079][v][cplayer] Set property: user-data/osc/visibility="auto" -> 1
+[   0.079][d][cplayer] Run command: disable-section, flags=64, args=[name="input"]
+[   0.079][d][stats] loading mp.defaults
+[   0.079][d][cplayer] Run command: disable-section, flags=64, args=[name="window-controls"]
+[   0.079][d][global] config path: 'script-opts/select.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/script-opts/select.conf'
+[   0.079][v][cplayer] Set property: sub-margin-y-offset=0 -> 1
+[   0.079][d][global] config path: 'script-opts/select.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/script-opts/select.conf'
+[   0.079][d][select] script-opts/select.conf not found.
+[   0.079][v][cplayer] Set property: osd-margin-y-offset=0 -> 1
+[   0.079][v][cplayer] Set property: sub-margin-y-offset=0 -> 1
+[   0.079][v][cplayer] Set property: osd-margin-y-offset=0 -> 1
+[   0.079][d][commands] reading options for commands
+[   0.079][v][cplayer] Set property: user-data/osc/margins={"r":0,"t":0,"l":0,"b":0} -> 1
+[   0.080][d][cplayer] Run command: define-section, flags=64, args=[name="input_select", contents="", flags="default"]
+[   0.080][d][cplayer] Run command: enable-section, flags=64, args=[name="input_select", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.080][d][cplayer] Run command: define-section, flags=64, args=[name="input_forced_select", contents="", flags="force"]
+[   0.080][d][cplayer] Run command: enable-section, flags=64, args=[name="input_forced_select", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.080][d][stats] loading @stats.lua
+[   0.081][d][global] config path: 'script-opts/commands.conf' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/script-opts/commands.conf'
+[   0.081][v][cplayer] Set property: sub-margin-y-offset=0 -> 1
+[   0.081][d][global] config path: 'script-opts/commands.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/script-opts/commands.conf'
+[   0.081][d][global] config path: 'script-opts/commands.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/script-opts/commands.conf'
+[   0.081][v][cplayer] Set property: osd-margin-y-offset=0 -> 1
+[   0.081][d][commands] script-opts/commands.conf not found.
+[   0.081][v][cplayer] Set property: sub-margin-y-offset=0 -> 1
+[   0.081][v][cplayer] Set property: osd-margin-y-offset=0 -> 1
+[   0.081][v][cplayer] Set property: user-data/osc/margins={"r":0,"t":0,"l":0,"b":0} -> 1
+[   0.081][d][cplayer] Run command: define-section, flags=64, args=[name="input_commands", contents="", flags="default"]
+[   0.081][d][cplayer] Run command: enable-section, flags=64, args=[name="input_commands", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.081][d][cplayer] Run command: define-section, flags=64, args=[name="input_forced_commands", contents="", flags="force"]
+[   0.081][d][cplayer] Run command: disable-section, flags=64, args=[name="showhide"]
+[   0.081][d][cplayer] Run command: enable-section, flags=64, args=[name="input_forced_commands", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.081][d][cplayer] Run command: disable-section, flags=64, args=[name="showhide_wc"]
+[   0.081][d][cplayer] Run command: define-section, flags=64, args=[name="input_osc", contents="", flags="default"]
+[   0.081][d][cplayer] Run command: enable-section, flags=64, args=[name="input_osc", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.081][d][cplayer] Run command: define-section, flags=64, args=[name="input_forced_osc", contents="", flags="force"]
+[   0.081][d][cplayer] Run command: enable-section, flags=64, args=[name="input_forced_osc", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.081][d][auto_profiles] Destroying client handle...
+[   0.083][d][stats] reading options for stats
+[   0.083][d][global] config path: 'script-opts/stats.conf' -/-> 'C:\Users\DELL\AppData\Roaming/mpv/script-opts/stats.conf'
+[   0.083][d][global] config path: 'script-opts/stats.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/script-opts/stats.conf'
+[   0.083][d][global] config path: 'script-opts/stats.conf' -/-> 'C:/Users/DELL/AppData/Local/Temp/opencode/mpvspike/bin/mpv/script-opts/stats.conf'
+[   0.083][d][stats] script-opts/stats.conf not found.
+[   0.084][v][cplayer] Done loading scripts.
+[   0.084][d][cplayer] Run command: define-section, flags=64, args=[name="input_stats", contents="", flags="default"]
+[   0.084][d][cplayer] Run command: enable-section, flags=64, args=[name="input_stats", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.084][d][cplayer] Run command: define-section, flags=64, args=[name="input_forced_stats", contents="", flags="force"]
+[   0.084][d][cplayer] Run command: enable-section, flags=64, args=[name="input_forced_stats", flags="allow-hide-cursor+allow-vo-dragging"]
+[   0.093][v][ipc] Listening to IPC pipe.
+[   0.188][v][ipc_0] Client connected
