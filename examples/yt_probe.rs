@@ -184,9 +184,45 @@ fn main() -> Result<()> {
     engine.command(PlayerCommand::Next)?;
     wait_for(&events, wait, "queued A to play on Next", |state| {
         state.playback == Playback::Playing
+            && !state.loading
             && state.track.as_ref().is_some_and(|track| track.uri == a.uri)
     })?;
     println!("queued A played on Next");
+
+    // A row the app has no metadata for parks as loading; the
+    // `SetTrackMetadata` answer plays it, the way the app answers a
+    // deferred queue item it fetched.
+    let c = probe_track("spotify:track:probe-c", "Musify probe A".into());
+    engine.command(PlayerCommand::Load(LoadSpec {
+        uris: vec![c.uri.clone()],
+        play: true,
+        ..LoadSpec::default()
+    }))?;
+    let parked = wait_for(&events, wait, "the metadata-less row to park", |state| {
+        state.loading && state.track.as_ref().is_some_and(|track| track.uri == c.uri)
+    })?;
+    if !parked
+        .track
+        .as_ref()
+        .is_some_and(|track| track.title.is_empty())
+    {
+        bail!("the parked row already had metadata");
+    }
+    engine.command(PlayerCommand::SetTrackMetadata {
+        uri: c.uri.clone(),
+        track: c.clone(),
+    })?;
+    wait_for(
+        &events,
+        wait,
+        "the metadata answer to play the row",
+        |state| {
+            state.playback == Playback::Playing
+                && !state.loading
+                && state.track.as_ref().is_some_and(|track| track.uri == c.uri)
+        },
+    )?;
+    println!("a metadata-less row waited and played on SetTrackMetadata");
 
     engine.shutdown();
     println!("PROBE PASS");

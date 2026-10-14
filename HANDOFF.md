@@ -22,16 +22,35 @@ A personal fork of Spotifast (native Rust Spotify client, egui UI), renamed to *
 - `notes/mpv-spike/` — snapshot of the yt-dlp + mpv integration proof from the original machine: exact `yt-dlp` output shapes, mpv JSON IPC log, the scripts used. Re-run a small spike on the new machine if anything is unclear.
 - `.github/workflows/build.yml` — the CI that builds the exe. Upstream also ships ~9 other workflows that fire in this fork (board, docs, release, issue triage...); ignore their noise or trim them. `ci.yml` is upstream's test suite if you want free test coverage.
 
-## State at packing (2026-10-14)
+## State (2026-10-15)
 
-- Fork commits on top of upstream: (1) `Add GitHub Actions Windows release build workflow`; (2) `Replace README with fork notice`; (3) the docs commit that added this file, `YT-ENGINE-PLAN.md`, and `notes/`.
-- **No code changes yet.** The fork is pristine upstream aside from the above. Implementation has not started.
-- Baseline CI: at packing time the pristine `build` run (id 38610927318) and upstream's `CI` were both `in_progress` (~13 min; cold cache, large dependency tree). **Check before anything else:**
-  `gh run list --repo msedge-projects/spotifast-yt`
-  - Green: pipeline proven. `gh run download <id> --repo msedge-projects/spotifast-yt` fetches artifact `musify-windows-x64` (contains `musify.exe`).
-  - Red: `gh run view <id> --repo msedge-projects/spotifast-yt --log-failed`. Likely causes: git dependency fetch (all are public `crmne/*` repos) or a toolchain quirk (repo pins Rust 1.98.0 via `rust-toolchain.toml`; CI installs it automatically).
-  - Git dependency revisions, for diagnosis: fastframe `v0.6.0`; egui `ba6790fe7cf46e58e8d27ce1524cbfdee745e938`; winit `ed7caa9023f10b397f5b6ec8284a840cbd8a6f65`; hyper-proxy2 `efca4811371ddae81c06be168de54194938d70b1`; librespot `847125198bb251d1d4497f46bebbfa4868b7d5d7`; projectm-rs `93852ff7299e5a63ed1315437593fc70915c0863` (milkdrop feature only; the workflow disables it).
-- **Get a green baseline before patching.**
+- On top of upstream: the Windows build workflow, the README notice, the
+  handoff docs, the **Musify rename** (`cb10ba3`; red branding, binary
+  `musify.exe`, artifact `musify-windows-x64`, app id
+  `io.github.msedge_projects.Musify`, fresh data folders), the rename's
+  follow-up fixes (`0e30835` tray template mask, `8814d66` flake vendor
+  hash, `0ee3d5c` Packaging trigger), and the **YouTube engine**
+  (`b6d4466`, `src/player_yt.rs`).
+- Free accounts route to the YouTube engine automatically once the account
+  check answers; Premium keeps the untouched librespot engine. Metadata
+  rides `LoadSpec::tracks`, `AddToQueue { uri, track }` and the deferred
+  `SetTrackMetadata`; the engine owns queue advancement. In YouTube mode
+  the queue panel is built from app state (the user's rows, then the rest
+  of the context); Spotify's queue endpoint is not polled for it.
+- Verified locally (Linux, `--no-default-features`): the full test suite
+  (1185 lib tests plus the integration suites), `--all-features` clippy and
+  rustdoc with `-D warnings`, and `examples/yt_probe.rs` end to end with a
+  stub yt-dlp and mpv 0.37 (connect, resolve, play, seek, volume,
+  pause/resume, end-of-track advance, queued Next, deferred
+  `SetTrackMetadata`).
+- The Windows artifact builds green, carries the red icon at every size
+  (verified inside the exe), and imports no MSVC runtime. The artifact of
+  record is the `build` run on the final green `main` commit.
+- Ads: the resolved stream is audio-only, so YouTube's player-stitched ads
+  never reach mpv; in-content sponsor reads remain (SponsorBlock would be a
+  separate, explicit feature). Faking Premium stays out.
+- Not yet run: the real YouTube resolve from the fork's UI on the user's
+  Windows machine with real yt-dlp + mpv, and any macOS runtime testing.
 
 The workflow (`.github/workflows/build.yml`) is:
 
@@ -66,7 +85,7 @@ jobs:
 6. Adopted from upstream's `AGENTS.md` anyway: network/playback work on the runtime (never block the UI thread); focused changes; tests updated in the same change; honest platform-coverage claims.
 7. Do not touch either company's server-side gates: no Spotify credential forging, no YouTube attestation circumvention. yt-dlp + mpv act client-side against public streams; keep it that way.
 
-## Implementation summary (full detail in YT-ENGINE-PLAN.md)
+## Implementation summary (implemented in `b6d4466`; full detail in YT-ENGINE-PLAN.md)
 
 - `Cargo.toml`: tokio features += `"process"` ("net" already covers Windows named pipes).
 - `src/lib.rs`: `pub mod player_yt;`.
@@ -87,18 +106,22 @@ jobs:
 
 - PowerShell 5.1 harness quirks: `[System.Net.Http.*]` types are not loaded (use `Invoke-RestMethod` / `Invoke-WebRequest`); `C:\Windows\system32\winget` is a broken alias in pipelines — call `%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe` directly or `cmd /c winget`.
 - `git status` / `gh` can block for a minute or more while other heavy processes run — use generous timeouts.
-- Upstream tests encode the old behavior (free accounts told playback needs Premium — app.rs:25577). Update those expectations with the patch; upstream `ci.yml` (if kept) runs the test suite.
+- `cargo` commands share one target-dir lock: never run two cargo commands in the checkout at once (a background `cargo test` makes a foreground `cargo check` time out waiting).
+- Local builds want the CI's system packages on Linux: `libasound2-dev libpulse-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev cmake libclang-dev` (plus `ruby` for `packaging/test-launchers.py`).
+- The Packaging workflow is manual-only now: it needs published release assets, and this fork has none. The launcher regressions in `ci.yml` are the per-push checks.
 - Public repo = free Actions minutes; artifacts expire (default 90 days); every push rebuilds.
 
 ## Next steps (in order)
 
-1. Auth gh on the new machine; clone the repo; read `YT-ENGINE-PLAN.md` and this file; glance at `notes/mpv-spike/`.
-2. Confirm a GREEN baseline `build` run (or fix it) before touching code.
-3. Implement the patch in order: Cargo.toml → lib.rs → player.rs payloads → player_yt.rs → backend.rs → app.rs. Match the codebase style (anyhow results, `log::*`, poisoned-mutex pattern `unwrap_or_else(|p| p.into_inner())`, comments that say why).
-4. Update tests the behavior change touches; keep the tree compiling for `--no-default-features`.
-5. Push; watch the `build` run; fix compile errors from `--log-failed`; iterate until green.
-6. Download the artifact; test on Windows with yt-dlp + mpv installed: sign in with the free account, enable playback ("Set up playback here"), play a single song, an album, a playlist; check next/previous/seek/volume, end-of-track advance, and that a Premium login still uses librespot.
-7. Report honestly what was tested vs merely compiled.
+1. Fetch the artifact from the green `build` run:
+   `gh run download <id> --repo msedge-projects/spotifast-yt --name musify-windows-x64`
+2. On the Windows test machine (yt-dlp + mpv installed, see above): run
+   `musify.exe`, sign in with the free account, open Settings → playback
+   ("Free accounts play through YouTube…"), press Enable playback here, then
+   test a single song, an album, a playlist; next/previous/seek/volume;
+   end-of-track advance; adding to the queue and playing Next; and that a
+   Premium login still uses librespot.
+3. Report honestly what was run vs what only compiled.
 
 ## User context
 
