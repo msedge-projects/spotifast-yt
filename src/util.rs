@@ -202,8 +202,9 @@ pub fn open_spotify_url(uri: &str) -> Option<String> {
 pub fn tray_template_rgba(size: usize) -> Vec<u8> {
     let mut rgba = mark_rgba(size, false);
     for pixel in rgba.as_chunks_mut::<4>().0 {
-        // The triangle is the dark colour; make it a hole instead.
-        if pixel[1] < 128 {
+        // The triangle is the dark colour and the disc is the brand red;
+        // the red channel tells them apart whatever the brand is.
+        if pixel[0] < 128 {
             pixel[3] = 0;
         }
         pixel[0] = 0;
