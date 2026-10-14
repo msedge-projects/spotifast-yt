@@ -1,11 +1,12 @@
 name: Packaging
 
+# This fork publishes no releases, and the packaging build downloads a
+# release's binaries (the pinned v0.11.2 fixture or the given version's
+# assets); on every packaging-touching push it could only fail with a 404.
+# Run it manually once this repository has a release (or through the
+# release workflow, which calls it), and keep the launcher regressions in
+# `ci.yml` doing the per-push checking.
 on:
-  push:
-    branches: [main, master]
-    paths: [native-packages.yaml, packaging/**, contrib/omarchy/**, .github/workflows/packaging.yml, .github/workflows/release.yml]
-  pull_request:
-    paths: [native-packages.yaml, packaging/**, contrib/omarchy/**, .github/workflows/packaging.yml, .github/workflows/release.yml]
   workflow_dispatch:
     inputs:
       version:
