@@ -197,10 +197,8 @@ mod tests {
         let mut jpeg = Cursor::new(Vec::new());
         image.write_to(&mut jpeg, ImageFormat::Jpeg).unwrap();
         assert!(prepare(jpeg.get_ref()).is_ok());
-        let missing = std::env::temp_dir().join(format!(
-            "spotifast-missing-cover-{}.jpg",
-            std::process::id()
-        ));
+        let missing =
+            std::env::temp_dir().join(format!("musify-missing-cover-{}.jpg", std::process::id()));
         assert!(read(&missing).unwrap_err().contains("Couldn't open"));
     }
 

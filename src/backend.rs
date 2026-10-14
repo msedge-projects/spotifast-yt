@@ -244,7 +244,7 @@ pub enum ApiRequest {
         serial: u64,
     },
     /// Search for one kind of thing and report the best match, to play it:
-    /// how `spotifast play-search` plays a song by its name.
+    /// how `musify play-search` plays a song by its name.
     PlaySearch {
         kind: String,
         query: String,
@@ -1035,7 +1035,7 @@ impl Backend {
         let (event_tx, event_rx) = std::sync::mpsc::channel();
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
-            .thread_name("spotifast-runtime")
+            .thread_name("musify-runtime")
             .enable_all()
             .build()
             .expect("unable to start the async runtime");
@@ -1056,7 +1056,7 @@ impl Backend {
         let worker_art = art.clone();
         let worker_commands = command_tx.clone();
         let thread = std::thread::Builder::new()
-            .name("spotifast-backend".to_string())
+            .name("musify-backend".to_string())
             .spawn(move || {
                 runtime.block_on(async move {
                     let mut worker = Worker::new(
@@ -3587,7 +3587,7 @@ impl Worker {
                 if !lease.current() {
                     return Err("Sign-in changed before receiver activation.".into());
                 }
-                crate::zeroconf::add_user(&http, &receiver, &info, &credentials, "Spotifast")
+                crate::zeroconf::add_user(&http, &receiver, &info, &credentials, "Musify")
                     .map_err(|error| error.to_string())
             })();
             let _ = events.send(Event::ReceiverActivated { name, result });
@@ -5886,7 +5886,7 @@ mod playlist_cache_tests {
     #[test]
     fn incremental_checkpoints_append_only_new_rows_and_recover_from_failed_publication() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-playlist-cache-incremental-{}-{:?}",
+            "musify-playlist-cache-incremental-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -5964,7 +5964,7 @@ mod playlist_cache_tests {
     #[tokio::test]
     async fn incremental_cache_replaces_changed_snapshot_and_keeps_legacy_reader() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-playlist-cache-migration-{}-{:?}",
+            "musify-playlist-cache-migration-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -6036,7 +6036,7 @@ mod playlist_cache_tests {
     #[tokio::test]
     async fn reopening_a_cache_removes_rows_left_by_an_interrupted_replacement() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-playlist-cache-orphan-test-{}-{:?}",
+            "musify-playlist-cache-orphan-test-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -6102,7 +6102,7 @@ mod playlist_cache_tests {
     #[tokio::test]
     async fn the_file_reader_accepts_legacy_caches_and_ignores_unknown_fields() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-playlist-cache-legacy-read-test-{}-{:?}",
+            "musify-playlist-cache-legacy-read-test-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -6126,7 +6126,7 @@ mod playlist_cache_tests {
     #[tokio::test]
     async fn the_file_reader_rejects_missing_corrupt_and_trailing_data() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-playlist-cache-invalid-read-test-{}-{:?}",
+            "musify-playlist-cache-invalid-read-test-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -6152,7 +6152,7 @@ mod playlist_cache_tests {
     #[tokio::test]
     async fn a_new_checkpoint_atomically_replaces_the_previous_one() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-playlist-cache-test-{}-{:?}",
+            "musify-playlist-cache-test-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -6181,7 +6181,7 @@ mod playlist_cache_tests {
     #[tokio::test]
     async fn streaming_preserves_the_cache_bytes_and_duplicate_unavailable_rows() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-playlist-cache-stream-test-{}-{:?}",
+            "musify-playlist-cache-stream-test-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -6234,7 +6234,7 @@ mod playlist_cache_tests {
     #[tokio::test]
     async fn failed_checkpoint_keeps_existing_data_and_cleans_only_its_temporary_file() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-playlist-cache-failure-test-{}-{:?}",
+            "musify-playlist-cache-failure-test-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -6563,7 +6563,7 @@ mod authorization_tests {
 
     #[test]
     fn proxy_changes_compare_with_the_running_engine() {
-        const CHILD: &str = "SPOTIFAST_PROXY_SNAPSHOT_TEST";
+        const CHILD: &str = "MUSIFY_PROXY_SNAPSHOT_TEST";
         if std::env::var_os(CHILD).is_none() {
             let status = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -7118,8 +7118,7 @@ mod authorization_tests {
             .enable_all()
             .build()
             .unwrap();
-        let root =
-            std::env::temp_dir().join(format!("spotifast-auth-{name}-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("musify-auth-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let dirs = AppDirs {
             config: root.join("config"),

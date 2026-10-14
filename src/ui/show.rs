@@ -60,7 +60,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, id: &str) {
                     &gettext(locale, "You're offline"),
                     &gettext(
                         locale,
-                        "Spotifast will reconnect automatically when your connection returns.",
+                        "Musify will reconnect automatically when your connection returns.",
                     ),
                 );
             } else {
@@ -106,7 +106,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, id: &str) {
                     &gettext(app.locale, "You're offline"),
                     &gettext(
                         app.locale,
-                        "Spotifast will reconnect automatically when your connection returns.",
+                        "Musify will reconnect automatically when your connection returns.",
                     ),
                 );
             } else {
@@ -136,7 +136,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, id: &str) {
                     &gettext(app.locale, "You're offline"),
                     &gettext(
                         app.locale,
-                        "Spotifast will reconnect automatically when your connection returns.",
+                        "Musify will reconnect automatically when your connection returns.",
                     ),
                 );
             } else {

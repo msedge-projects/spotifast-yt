@@ -13,6 +13,6 @@ jobs:
         run: cargo build --release --no-default-features
       - uses: actions/upload-artifact@v4
         with:
-          name: spotifast-yt-windows-x64
-          path: target/release/spotifast.exe
+          name: musify-windows-x64
+          path: target/release/musify.exe
           if-no-files-found: error

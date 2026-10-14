@@ -3,13 +3,13 @@
   The Windows Installer package (WiX Toolset 5), built from a release binary
   by build-msi.py (native-packages runs it on every tag):
 
-    python packaging\windows\build-msi.py PAYLOAD dist\spotifast.msi 1.2.3 amd64
+    python packaging\windows\build-msi.py PAYLOAD dist\musify.msi 1.2.3 amd64
 
-  It needs no administrator rights: Spotifast goes to the user's own
-  Programs folder (%LOCALAPPDATA%\Programs\Spotifast) with a Start menu
+  It needs no administrator rights: Musify goes to the user's own
+  Programs folder (%LOCALAPPDATA%\Programs\Musify) with a Start menu
   shortcut, an optional desktop shortcut and the spotify: links, as the Inno
-  Setup program (spotifast.iss) installed it. A running copy is closed before
-  an update replaces it, and uninstalling never leaves part of Spotifast
+  Setup program (musify.iss) installed it. A running copy is closed before
+  an update replaces it, and uninstalling never leaves part of Musify
   behind while it runs (running-copy.c). Uninstalling also removes what the
   updater staged in the folder; an update never does (update-leftovers.c).
 
@@ -26,10 +26,10 @@
 
   <!--
     Who the package is. Releases use these values; test-msi.py builds a
-    throwaway identity so its installs never touch a real Spotifast.
+    throwaway identity so its installs never touch a real Musify.
   -->
   <?ifndef Identity ?>
-    <?define Identity = "Spotifast" ?>
+    <?define Identity = "Musify" ?>
   <?endif?>
   <?ifndef LinkScheme ?>
     <?define LinkScheme = "spotify" ?>
@@ -42,7 +42,7 @@
     <?define ProgramComponent = "{8EC6378E-B3EB-41F9-873B-01AE4466E5EE}" ?>
   <?endif?>
   <?ifndef InnoAppId ?>
-    <!-- spotifast.iss AppId, without Inno's doubled opening brace. -->
+    <!-- musify.iss AppId, without Inno's doubled opening brace. -->
     <?define InnoAppId = "{FCED1EA0-EBF5-4C32-BA3B-A3AD724BACC3}" ?>
   <?endif?>
   <?define InnoUninstallKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$(InnoAppId)_is1" ?>
@@ -72,8 +72,8 @@
     <Launch Condition="Installed OR NOT WINDOWSBUILD OR WINDOWSBUILD &gt;= 10240"
       Message="[ProductName] needs Windows 10 or later." />
 
-    <Icon Id="spotifast.ico" SourceFile="$(Icon)" />
-    <Property Id="ARPPRODUCTICON" Value="spotifast.ico" />
+    <Icon Id="musify.ico" SourceFile="$(Icon)" />
+    <Property Id="ARPPRODUCTICON" Value="musify.ico" />
     <Property Id="ARPURLINFOABOUT" Value="https://spotifast.rocks" />
     <Property Id="ARPHELPLINK" Value="https://github.com/crmne/spotifast/issues" />
     <Property Id="ARPURLUPDATEINFO" Value="https://spotifast.rocks/download/" />
@@ -97,7 +97,7 @@
     <StandardDirectory Id="DesktopFolder" />
 
     <!--
-      Where Spotifast goes, in order: the folder on the command line (the
+      Where Musify goes, in order: the folder on the command line (the
       updater passes the one the app runs from), the folder this package
       installed to before, the folder an Inno Setup install used, or the
       default. The two searches are what makes a hand-run package and an
@@ -156,11 +156,11 @@
     <ComponentGroup Id="Program" Directory="INSTALLFOLDER">
       <!-- A per-user component keeps its key path in HKCU. -->
       <Component Id="Program" Guid="$(ProgramComponent)">
-        <File Id="SpotifastExe" Source="$(Payload)\spotifast.exe" KeyPath="no" />
+        <File Id="MusifyExe" Source="$(Payload)\musify.exe" KeyPath="no" />
         <File Id="Readme" Source="$(Payload)\README.md" KeyPath="no" />
         <File Id="License" Source="$(Payload)\LICENSE" KeyPath="no" />
-        <!-- Tells the updater a Windows installer put Spotifast here. -->
-        <File Id="InstallerMarker" Source="$(Payload)\spotifast-installer.txt" KeyPath="no" />
+        <!-- Tells the updater a Windows installer put Musify here. -->
+        <File Id="InstallerMarker" Source="$(Payload)\musify-installer.txt" KeyPath="no" />
         <RegistryValue Root="HKCU" Key="$(InstallerKey)" Name="InstallFolder" Type="string"
           Value="[INSTALLFOLDER]" KeyPath="yes" />
         <!--
@@ -182,15 +182,15 @@
       </Component>
 
       <Component Id="Links">
-        <!-- Spotify links reach Spotifast through its own class. -->
+        <!-- Spotify links reach Musify through its own class. -->
         <RegistryKey Root="HKCU" Key="Software\Classes\$(Identity).spotify" ForceDeleteOnUninstall="yes">
           <RegistryValue Type="string" Value="URL:Spotify link" />
           <RegistryValue Name="URL Protocol" Type="string" Value="" />
-          <RegistryValue Key="DefaultIcon" Type="string" Value='"[#SpotifastExe]",0' />
-          <RegistryValue Key="shell\open\command" Type="string" Value='"[#SpotifastExe]" "%1"'
+          <RegistryValue Key="DefaultIcon" Type="string" Value='"[#MusifyExe]",0' />
+          <RegistryValue Key="shell\open\command" Type="string" Value='"[#MusifyExe]" "%1"'
             KeyPath="yes" />
         </RegistryKey>
-        <!-- Settings > Apps > Default apps lists Spotifast for spotify: links. -->
+        <!-- Settings > Apps > Default apps lists Musify for spotify: links. -->
         <RegistryKey Root="HKCU" Key="Software\$(Identity)\Capabilities" ForceDeleteOnUninstall="yes">
           <RegistryValue Name="ApplicationName" Type="string" Value="$(Identity)" />
           <RegistryValue Name="ApplicationDescription" Type="string" Value="A native Spotify client" />
@@ -209,7 +209,7 @@
       </Component>
 
       <!--
-        Spotify links (spotify:track:…) open in Spotifast, for this user only.
+        Spotify links (spotify:track:…) open in Musify, for this user only.
         The official client registers the same scheme when it is installed;
         whichever was set up last has the links, and Settings > Apps > Default
         apps can hand them to the other. Windows Installer never removes this
@@ -220,8 +220,8 @@
         <RegistryKey Root="HKCU" Key="Software\Classes\$(LinkScheme)">
           <RegistryValue Type="string" Value="URL:Spotify link" />
           <RegistryValue Name="URL Protocol" Type="string" Value="" />
-          <RegistryValue Key="DefaultIcon" Type="string" Value='"[#SpotifastExe]",0' />
-          <RegistryValue Key="shell\open\command" Type="string" Value='"[#SpotifastExe]" "%1"'
+          <RegistryValue Key="DefaultIcon" Type="string" Value='"[#MusifyExe]",0' />
+          <RegistryValue Key="shell\open\command" Type="string" Value='"[#MusifyExe]" "%1"'
             KeyPath="yes" />
         </RegistryKey>
       </Component>
@@ -235,14 +235,14 @@
       <!-- Same name and place as the Inno Setup shortcut, which it replaces. -->
       <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder">
         <RemoveFile Id="InnoStartMenuShortcut" Name="$(Identity).lnk" On="install" />
-        <Shortcut Id="StartMenuShortcut" Name="$(Identity)" Target="[#SpotifastExe]"
+        <Shortcut Id="StartMenuShortcut" Name="$(Identity)" Target="[#MusifyExe]"
           WorkingDirectory="INSTALLFOLDER" />
         <RegistryValue Root="HKCU" Key="$(InstallerKey)" Name="StartMenuShortcut" Type="string"
           Value="1" KeyPath="yes" />
       </Component>
       <Component Id="DesktopShortcut" Directory="DesktopFolder" Condition='DESKTOPSHORTCUT = "1" OR REMOVE'>
         <RemoveFile Id="InnoDesktopShortcut" Name="$(Identity).lnk" On="install" />
-        <Shortcut Id="DesktopShortcut" Name="$(Identity)" Target="[#SpotifastExe]"
+        <Shortcut Id="DesktopShortcut" Name="$(Identity)" Target="[#MusifyExe]"
           WorkingDirectory="INSTALLFOLDER" />
         <RegistryValue Root="HKCU" Key="$(InstallerKey)" Name="DesktopShortcut" Type="string"
           Value="1" KeyPath="yes" />
@@ -256,7 +256,7 @@
       </Component>
     </ComponentGroup>
 
-    <Feature Id="Spotifast" Title="$(Identity)" AllowAbsent="no">
+    <Feature Id="Musify" Title="$(Identity)" AllowAbsent="no">
       <ComponentGroupRef Id="Program" />
       <ComponentGroupRef Id="Shortcuts" />
     </Feature>
@@ -270,7 +270,7 @@
 
     <!--
       What the updater leaves here: see update-leftovers.c. fastframe-update
-      stages each update in .spotifast-update-<suffix> inside INSTALLFOLDER,
+      stages each update in .musify-update-<suffix> inside INSTALLFOLDER,
       and runs msiexec /i from the helper in it, beside a copy of the
       previous version. Those go on a real uninstall and never otherwise.
 
@@ -293,7 +293,7 @@
       so the staging folders must be gone by then. It always succeeds:
       leftovers it cannot remove never fail an uninstall. A rolled-back
       uninstall does not bring them back, and nothing needs them once
-      Spotifast is going.
+      Musify is going.
     -->
     <SetProperty Id="RemoveUpdateLeftovers" Value="[INSTALLFOLDER]" Before="RemoveUpdateLeftovers"
       Sequence="execute" Condition='REMOVE = "ALL" AND NOT UPGRADINGPRODUCTCODE' />
@@ -312,11 +312,11 @@
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch $(Identity)" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
-    <Property Id="WixShellExecTarget" Value="[#SpotifastExe]" />
-    <CustomAction Id="LaunchSpotifast" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixShellExec"
+    <Property Id="WixShellExecTarget" Value="[#MusifyExe]" />
+    <CustomAction Id="LaunchMusify" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixShellExec"
       Impersonate="yes" />
 
-    <UI Id="SpotifastUI">
+    <UI Id="MusifyUI">
       <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
       <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
       <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
@@ -409,7 +409,7 @@
       <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
 
       <!-- Launch after an interactive install, as the Finish page offers. -->
-      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchSpotifast" Order="1"
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchMusify" Order="1"
         Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
 

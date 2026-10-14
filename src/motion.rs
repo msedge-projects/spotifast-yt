@@ -70,7 +70,7 @@ pub fn apply(ctx: &egui::Context, reduced: bool) {
 }
 
 fn reduced_id() -> egui::Id {
-    egui::Id::new("spotifast-reduced-motion")
+    egui::Id::new("musify-reduced-motion")
 }
 
 /// Whether less motion is asked for, as last applied to `ctx`.

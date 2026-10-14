@@ -31,7 +31,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui,
                 gettext(
                     app.locale,
-                    "Spotifast will reconnect automatically when your connection returns.",
+                    "Musify will reconnect automatically when your connection returns.",
                 ),
                 theme::regular(14.0),
                 palette.secondary,
@@ -758,7 +758,7 @@ mod tests {
     #[cfg(feature = "demo")]
     #[test]
     fn quick_access_tiles_ask_for_art_the_display_can_show() {
-        let root = std::env::temp_dir().join(format!("spotifast-tiles-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("musify-tiles-{}", std::process::id()));
         let mut app = App::new(
             &crate::backend::Waker::default(),
             crate::paths::AppDirs {

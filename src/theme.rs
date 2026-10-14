@@ -51,9 +51,9 @@ impl Palette {
             text: Color32::from_rgb(0xf2, 0xf4, 0xf6),
             secondary: Color32::from_rgb(0xa9, 0xb1, 0xbc),
             dim: Color32::from_rgb(0x6e, 0x77, 0x84),
-            accent: Color32::from_rgb(0x1e, 0xd7, 0x60),
-            accent_hover: Color32::from_rgb(0x3c, 0xe8, 0x7a),
-            on_accent: Color32::from_rgb(0x0a, 0x14, 0x0e),
+            accent: Color32::from_rgb(0xef, 0x44, 0x44),
+            accent_hover: Color32::from_rgb(0xf8, 0x71, 0x71),
+            on_accent: Color32::from_rgb(0x14, 0x0a, 0x0a),
             danger: Color32::from_rgb(0xf5, 0x71, 0x7f),
             warning: Color32::from_rgb(0xf2, 0xb8, 0x5c),
             overlay: Color32::from_rgb(0x22, 0x27, 0x2e),
@@ -74,8 +74,8 @@ impl Palette {
             text: Color32::from_rgb(0x14, 0x17, 0x1a),
             secondary: Color32::from_rgb(0x53, 0x5b, 0x66),
             dim: Color32::from_rgb(0x8b, 0x93, 0x9e),
-            accent: Color32::from_rgb(0x15, 0xa6, 0x4a),
-            accent_hover: Color32::from_rgb(0x12, 0x8f, 0x40),
+            accent: Color32::from_rgb(0xdc, 0x26, 0x26),
+            accent_hover: Color32::from_rgb(0xb9, 0x1c, 0x1c),
             on_accent: Color32::WHITE,
             danger: Color32::from_rgb(0xd6, 0x3b, 0x4c),
             warning: Color32::from_rgb(0xb8, 0x7a, 0x14),
@@ -145,8 +145,8 @@ impl fastframe_theme::Palette for Palette {
 /// user.
 pub fn enable_desktop_themes(catalog: &mut Catalog) {
     catalog.enable_desktop_themes(fastframe_theme::DesktopThemes {
-        slug: "spotifast",
-        omarchy_template: include_str!("../contrib/omarchy/spotifast.json.tpl"),
+        slug: "musify",
+        omarchy_template: include_str!("../contrib/omarchy/musify.json.tpl"),
         // The template has not changed since it first shipped.
         omarchy_previous_templates: &[],
         presets: true,
@@ -187,7 +187,7 @@ pub fn catalog_detail(
         ),
         Status::Problem(_) => gettext(
             locale,
-            "Custom themes could not be loaded. Run spotifast reload-themes to try again.",
+            "Custom themes could not be loaded. Run musify reload-themes to try again.",
         ),
     }
 }
@@ -401,9 +401,9 @@ fn install_fonts(ctx: &egui::Context) {
 
 fastframe_icons::icons! {
     /// Every icon the interface draws. The shared Lucide icons come from
-    /// fastframe-icons; the rest are Spotifast's own files.
+    /// fastframe-icons; the rest are Musify's own files.
     pub enum Icon {
-        prefix: "spotifast-icon-",
+        prefix: "musify-icon-",
         directory: "../assets/icons/",
         ArrowLeft => lucide "arrow-left",
         ArrowRight => "arrow-right",
@@ -571,7 +571,7 @@ pub fn icon_button(
 /// Horizontal offset that optically centers play triangles.
 ///
 /// Lucide includes a 1/24-width shift; a measured 3% shift centers the icon at
-/// Spotifast's sizes. Use this everywhere instead of per-call adjustments.
+/// Musify's sizes. Use this everywhere instead of per-call adjustments.
 pub fn play_glyph_offset(icon: Icon, icon_size: f32) -> Vec2 {
     if matches!(icon, Icon::PlayFilled | Icon::Play) {
         Vec2::new(icon_size * (0.03 - 1.0 / 24.0), 0.0)
@@ -587,7 +587,7 @@ pub fn logo(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
     let ppp = ui.ctx().pixels_per_point();
     // The raster keeps two pixels of margin on each side of the disc.
     let pixels = (diameter * ppp).round() as usize + 4;
-    let id = egui::Id::new(("spotifast-logo", pixels));
+    let id = egui::Id::new(("musify-logo", pixels));
     let texture = ui
         .ctx()
         .data(|data| data.get_temp::<egui::TextureHandle>(id))
@@ -596,9 +596,9 @@ pub fn logo(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
                 [pixels, pixels],
                 &crate::util::app_icon_rgba(pixels),
             );
-            let texture =
-                ui.ctx()
-                    .load_texture("spotifast-logo", image, egui::TextureOptions::LINEAR);
+            let texture = ui
+                .ctx()
+                .load_texture("musify-logo", image, egui::TextureOptions::LINEAR);
             ui.ctx()
                 .data_mut(|data| data.insert_temp(id, texture.clone()));
             texture
@@ -1020,7 +1020,7 @@ mod tests {
     }
 
     /// Palette files name the sixteen colours every app shares and
-    /// Spotifast's own `tint`, and only those: a typo is an invalid file,
+    /// Musify's own `tint`, and only those: a typo is an invalid file,
     /// not an ignored colour.
     #[test]
     fn palette_files_set_every_base_colour() {
@@ -1047,11 +1047,11 @@ mod tests {
     fn the_shipped_omarchy_files_are_the_shared_ones() {
         let lines = |text: &str| text.replace("\r\n", "\n");
         assert_eq!(
-            lines(include_str!("../contrib/omarchy/spotifast-theme")),
-            lines(&fastframe_theme::omarchy::hook_script("spotifast"))
+            lines(include_str!("../contrib/omarchy/musify-theme")),
+            lines(&fastframe_theme::omarchy::hook_script("musify"))
         );
         assert_eq!(
-            lines(include_str!("../contrib/omarchy/spotifast.json.tpl")),
+            lines(include_str!("../contrib/omarchy/musify.json.tpl")),
             lines(fastframe_theme::omarchy::BASE_TEMPLATE)
         );
     }
@@ -1124,7 +1124,7 @@ mod tests {
     }
 
     #[test]
-    fn a_local_palette_keeps_spotifasts_widget_style_local() {
+    fn a_local_palette_keeps_musifys_widget_style_local() {
         let ctx = egui::Context::default();
         apply(&ctx, &Palette::light());
         let dark = Palette::dark();

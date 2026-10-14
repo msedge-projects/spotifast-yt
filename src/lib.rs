@@ -1,4 +1,4 @@
-//! Spotifast's internals, exposed so diagnostics and tests can reach them.
+//! Musify's internals, exposed so diagnostics and tests can reach them.
 
 pub mod account_cache;
 pub mod api;

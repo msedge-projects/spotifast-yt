@@ -848,7 +848,7 @@ mod tests {
         use egui::accesskit::{Action as Access, ActionRequest, Role, TreeId};
 
         let root =
-            std::env::temp_dir().join(format!("spotifast-winamp-remove-{}", std::process::id()));
+            std::env::temp_dir().join(format!("musify-winamp-remove-{}", std::process::id()));
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         let waker = crate::backend::Waker::default();

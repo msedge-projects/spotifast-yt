@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build the Windows Installer package (spotifast.wxs) from a release binary.
+"""Build the Windows Installer package (musify.wxs) from a release binary.
 
     python packaging/windows/build-msi.py PAYLOAD PACKAGE VERSION ARCH [NAME=VALUE ...]
 
-PAYLOAD is a folder holding spotifast.exe, README.md, LICENSE and
-spotifast-installer.txt; PACKAGE is the .msi to write; VERSION is the
+PAYLOAD is a folder holding musify.exe, README.md, LICENSE and
+musify-installer.txt; PACKAGE is the .msi to write; VERSION is the
 release (1.2.3, or 1.2.3-rc1); ARCH is amd64 or arm64. native-packages runs
 it this way for the windows-* targets in native-packages.yaml. NAME=VALUE
 pairs override the package's identity, which only test-msi.py does.
@@ -32,7 +32,7 @@ ACTIONS = ("running-copy.c", "update-leftovers.c")
 EXTENSIONS = (f"WixToolset.UI.wixext/{WIX}", f"WixToolset.Util.wixext/{WIX}")
 # native-packages architecture: WiX -arch value and PE machine type.
 ARCHES = {"amd64": ("x64", 0x8664), "arm64": ("arm64", 0xAA64)}
-PAYLOAD = ("spotifast.exe", "README.md", "LICENSE", "spotifast-installer.txt")
+PAYLOAD = ("musify.exe", "README.md", "LICENSE", "musify-installer.txt")
 # Variables the build sets itself; the identity ones come from NAME=VALUE.
 BUILT = {"Version", "Payload", "CustomActions", "LicenseRtf", "Icon"}
 
@@ -134,7 +134,7 @@ def build(payload, package, version, arch, defines=()):
     for name in PAYLOAD:
         if not (payload / name).is_file():
             raise SystemExit(f"{payload} has no {name}")
-    executable = payload / "spotifast.exe"
+    executable = payload / "musify.exe"
     if pe_machine(executable) != machine:
         raise SystemExit(f"{executable} is not built for {arch}")
     # Windows Installer replaces a file only for a newer version, and an
@@ -151,7 +151,7 @@ def build(payload, package, version, arch, defines=()):
             raise SystemExit(f"Expected NAME=VALUE for the package's identity, not {define!r}")
         variables[name] = value
 
-    with tempfile.TemporaryDirectory(prefix="spotifast-msi-") as directory:
+    with tempfile.TemporaryDirectory(prefix="musify-msi-") as directory:
         work = Path(directory)
         actions = work / "custom-actions.dll"
         # Objects land in the working folder (cwd). No /Fo folder: its closing
@@ -165,9 +165,9 @@ def build(payload, package, version, arch, defines=()):
         for extension in EXTENSIONS:
             run(["wix", "extension", "add", "-g", extension])
         variables.update(
-            Version=numeric, Payload=payload, CustomActions=actions, LicenseRtf=rtf, Icon=HERE / "spotifast.ico",
+            Version=numeric, Payload=payload, CustomActions=actions, LicenseRtf=rtf, Icon=HERE / "musify.ico",
         )
-        command = ["wix", "build", HERE / "spotifast.wxs", "-arch", wix_arch]
+        command = ["wix", "build", HERE / "musify.wxs", "-arch", wix_arch]
         for extension in EXTENSIONS:
             command += ["-ext", extension]
         for name, value in variables.items():

@@ -1,12 +1,12 @@
 # SOME DESCRIPTIVE TITLE.
-# Copyright (C) YEAR Spotifast contributors
-# This file is distributed under the same license as the Spotifast package.
+# Copyright (C) YEAR Musify contributors
+# This file is distributed under the same license as the Musify package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: Spotifast\n"
+"Project-Id-Version: Musify\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/spotifast/issues/new?"
 "template=translation.yml\n"
 "POT-Creation-Date: 2026-10-14 15:56+0200\n"
@@ -291,7 +291,7 @@ msgid "Mute"
 msgstr ""
 
 #: src/ui/player_bar.rs:874
-msgid "This device's volume can't be changed from Spotifast"
+msgid "This device's volume can't be changed from Musify"
 msgstr ""
 
 #: src/ui/player_bar.rs:894 src/ui/devices.rs:198
@@ -395,7 +395,7 @@ msgstr ""
 #: src/ui/collection.rs:1865 src/ui/collection.rs:2110 src/ui/home.rs:34
 #: src/ui/library.rs:262 src/ui/show.rs:63 src/ui/show.rs:109
 #: src/ui/show.rs:139
-msgid "Spotifast will reconnect automatically when your connection returns."
+msgid "Musify will reconnect automatically when your connection returns."
 msgstr ""
 
 #. Translators: Keep {error} unchanged. It is the original failure detail.
@@ -681,11 +681,11 @@ msgstr ""
 #. Translators: {version} is a version number such as 1.4.0.
 #: src/app.rs:2231
 #, rust-format
-msgid "Spotifast {version} is available"
+msgid "Musify {version} is available"
 msgstr ""
 
 #: src/app.rs:2248
-msgid "Spotifast is up to date"
+msgid "Musify is up to date"
 msgstr ""
 
 #. Translators: {error} is an error message.
@@ -914,7 +914,7 @@ msgid "This song's album is not on Spotify"
 msgstr ""
 
 #: src/app.rs:7450
-msgid "Spotifast cannot open this kind of Spotify link"
+msgid "Musify cannot open this kind of Spotify link"
 msgstr ""
 
 #: src/app.rs:7698
@@ -1333,12 +1333,12 @@ msgstr ""
 
 #: src/ui/settings.rs:556
 msgid ""
-"Spotifast hides to the system tray. Quit from the tray menu or with Ctrl+Q."
+"Musify hides to the system tray. Quit from the tray menu or with Ctrl+Q."
 msgstr ""
 
 #: src/ui/settings.rs:560
 msgid ""
-"Spotifast hides to the system tray. Quit from the tray menu or with Cmd+Q."
+"Musify hides to the system tray. Quit from the tray menu or with Cmd+Q."
 msgstr ""
 
 #: src/ui/settings.rs:567
@@ -1496,7 +1496,7 @@ msgstr ""
 
 #: src/ui/settings.rs:951
 msgid ""
-"Draw Spotifast's own title bar and window buttons instead of the desktop's."
+"Draw Musify's own title bar and window buttons instead of the desktop's."
 msgstr ""
 
 #: src/ui/settings.rs:959
@@ -1673,7 +1673,7 @@ msgstr ""
 #: src/ui/settings.rs:1614
 #, rust-format
 msgid ""
-"None yet in {folder}. Add .milk files here. Spotifast downloads presets when "
+"None yet in {folder}. Add .milk files here. Musify downloads presets when "
 "MilkDrop first opens with an empty folder."
 msgstr ""
 
@@ -1681,7 +1681,7 @@ msgstr ""
 #: src/ui/settings.rs:1620
 #, rust-format
 msgid ""
-"One preset in {folder}. Add .milk files here. Spotifast downloads presets "
+"One preset in {folder}. Add .milk files here. Musify downloads presets "
 "when MilkDrop first opens with an empty folder."
 msgstr ""
 
@@ -1689,10 +1689,10 @@ msgstr ""
 #: src/ui/settings.rs:1626
 #, rust-format
 msgid ""
-"{count} preset in {folder}. Add .milk files here. Spotifast downloads "
+"{count} preset in {folder}. Add .milk files here. Musify downloads "
 "presets when MilkDrop first opens with an empty folder."
 msgid_plural ""
-"{count} presets in {folder}. Add .milk files here. Spotifast downloads "
+"{count} presets in {folder}. Add .milk files here. Musify downloads "
 "presets when MilkDrop first opens with an empty folder."
 msgstr[0] ""
 msgstr[1] ""
@@ -1958,7 +1958,7 @@ msgstr ""
 
 #: src/theme.rs:190
 msgid ""
-"Custom themes could not be loaded. Run spotifast reload-themes to try again."
+"Custom themes could not be loaded. Run musify reload-themes to try again."
 msgstr ""
 
 #: src/ui/artist.rs:32
@@ -2148,7 +2148,7 @@ msgstr ""
 
 #: src/ui/dialogs.rs:41
 msgid ""
-"Spotifast's default connection shares Spotify's request limit with other "
+"Musify's default connection shares Spotify's request limit with other "
 "listeners. When it gets busy, loading music and using playback controls can "
 "take longer."
 msgstr ""
@@ -2222,7 +2222,7 @@ msgstr ""
 #: src/ui/dialogs.rs:213
 msgid ""
 "Playback needs Spotify Premium. Free accounts can browse and search, but "
-"cannot play music through Spotifast."
+"cannot play music through Musify."
 msgstr ""
 
 #: src/ui/dialogs.rs:222
@@ -2566,7 +2566,7 @@ msgstr ""
 
 #: src/ui/login.rs:134
 msgid ""
-"Sign in through your browser. Spotifast never sees your password. Local "
+"Sign in through your browser. Musify never sees your password. Local "
 "playback needs Spotify Premium."
 msgstr ""
 
@@ -2577,7 +2577,7 @@ msgstr ""
 #. Translators: {version} is the app's version number, such as 1.2.0.
 #: src/ui/login.rs:188
 #, rust-format
-msgid "Spotifast {version} • not affiliated with Spotify"
+msgid "Musify {version} • not affiliated with Spotify"
 msgstr ""
 
 #: src/ui/mod.rs:462
@@ -2803,7 +2803,7 @@ msgstr ""
 
 #: src/ui/topbar.rs:521
 msgid ""
-"Spotifast is offline. Reconnecting automatically when connection returns."
+"Musify is offline. Reconnecting automatically when connection returns."
 msgstr ""
 
 #: src/ui/topbar.rs:548
@@ -2841,7 +2841,7 @@ msgid "Version {version} is available."
 msgstr ""
 
 #: src/ui/update.rs:19
-msgid "Update Spotifast"
+msgid "Update Musify"
 msgstr ""
 
 #: src/ui/update.rs:51
@@ -2867,7 +2867,7 @@ msgid "Ready to install"
 msgstr ""
 
 #: src/ui/update.rs:115
-msgid "Music playing on this computer will stop when Spotifast restarts."
+msgid "Music playing on this computer will stop when Musify restarts."
 msgstr ""
 
 #: src/ui/update.rs:122
@@ -3192,22 +3192,22 @@ msgid "On Wayland, use your desktop's Keep Above shortcut or window rule."
 msgstr ""
 
 #: src/window.rs:39
-msgid "Spotifast cannot open its window"
+msgid "Musify cannot open its window"
 msgstr ""
 
 #: src/window.rs:45
 msgid ""
-"On Windows on ARM, the OpenGL that Spotifast draws with comes from "
+"On Windows on ARM, the OpenGL that Musify draws with comes from "
 "Microsoft's OpenCL, OpenGL & Vulkan Compatibility Pack. Open its Microsoft "
 "Store page to install or repair it?"
 msgstr ""
 
 #. Translators: Keep {url} exactly as written. It becomes the address
-#. of the Spotifast download page.
+#. of the Musify download page.
 #: src/window.rs:55
 #, rust-format
 msgid ""
-"Spotifast needs a graphics driver with OpenGL 2.0 or newer, and this PC or "
+"Musify needs a graphics driver with OpenGL 2.0 or newer, and this PC or "
 "virtual machine does not provide one. Install the graphics driver, or turn "
 "on GPU acceleration for the virtual machine. Open {url} to read more?"
 msgstr ""

@@ -1,4 +1,4 @@
-# Spotifast fork patch map: YouTube playback engine (`player_yt`)
+# Musify (spotifast-yt) patch map: YouTube playback engine (`player_yt`)
 
 Source: read-only analysis of `C:\Users\DELL\spotifast-yt` @ v0.13.2 (2026-10-14).
 Policy note: upstream `AGENTS.md` forbids alternate audio sources (contribution/product policy);

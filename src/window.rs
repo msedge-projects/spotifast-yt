@@ -24,8 +24,8 @@ pub struct MissingOpenGl {
 
 /// The Store page of the OpenCL, OpenGL & Vulkan Compatibility Pack.
 const COMPATIBILITY_PACK_PAGE: &str = "ms-windows-store://pdp/?ProductId=9NQPSL29BFFF";
-/// The download guide, which documents the OpenGL 2.0 requirement.
-const DOWNLOAD_PAGE: &str = "https://spotifast.rocks/download/";
+/// The project's page, which documents the OpenGL 2.0 requirement.
+const DOWNLOAD_PAGE: &str = "https://github.com/msedge-projects/spotifast-yt";
 
 /// Says why no window opened and where the fix is.
 ///
@@ -36,13 +36,13 @@ const DOWNLOAD_PAGE: &str = "https://spotifast.rocks/download/";
 /// Microsoft Basic Display Adapter, which offers OpenGL 1.1.
 pub fn missing_opengl_message(locale: crate::i18n::Locale, arm: bool) -> MissingOpenGl {
     use crate::i18n::gettext;
-    let title = gettext(locale, "Spotifast cannot open its window").into_owned();
+    let title = gettext(locale, "Musify cannot open its window").into_owned();
     if arm {
         return MissingOpenGl {
             title,
             text: gettext(
                 locale,
-                "On Windows on ARM, the OpenGL that Spotifast draws with comes from Microsoft's OpenCL, OpenGL & Vulkan Compatibility Pack. Open its Microsoft Store page to install or repair it?",
+                "On Windows on ARM, the OpenGL that Musify draws with comes from Microsoft's OpenCL, OpenGL & Vulkan Compatibility Pack. Open its Microsoft Store page to install or repair it?",
             )
             .into_owned(),
             page: COMPATIBILITY_PACK_PAGE,
@@ -51,8 +51,8 @@ pub fn missing_opengl_message(locale: crate::i18n::Locale, arm: bool) -> Missing
     let text = gettext(
         locale,
         // Translators: Keep {url} exactly as written. It becomes the address
-        // of the Spotifast download page.
-        "Spotifast needs a graphics driver with OpenGL 2.0 or newer, and this PC or virtual machine does not provide one. Install the graphics driver, or turn on GPU acceleration for the virtual machine. Open {url} to read more?",
+        // of the Musify download page.
+        "Musify needs a graphics driver with OpenGL 2.0 or newer, and this PC or virtual machine does not provide one. Install the graphics driver, or turn on GPU acceleration for the virtual machine. Open {url} to read more?",
     );
     MissingOpenGl {
         title,
@@ -237,11 +237,14 @@ mod tests {
         assert!(arm.text.contains("Compatibility Pack"));
 
         let x64 = missing_opengl_message(crate::i18n::Locale::English, false);
-        assert_eq!(x64.title, "Spotifast cannot open its window");
-        assert_eq!(x64.page, "https://spotifast.rocks/download/");
+        assert_eq!(x64.title, "Musify cannot open its window");
+        assert_eq!(x64.page, "https://github.com/msedge-projects/spotifast-yt");
         assert!(x64.text.contains("OpenGL 2.0"));
         assert!(x64.text.contains("virtual machine"));
-        assert!(x64.text.contains("https://spotifast.rocks/download/"));
+        assert!(
+            x64.text
+                .contains("https://github.com/msedge-projects/spotifast-yt")
+        );
         assert!(!x64.text.contains("{url}"));
     }
 

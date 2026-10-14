@@ -633,8 +633,7 @@ mod tests {
 
     #[tokio::test]
     async fn corrupt_wrong_account_and_interrupted_cache_writes_are_harmless() {
-        let root =
-            std::env::temp_dir().join(format!("spotifast-liked-cache-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("musify-liked-cache-{}", std::process::id()));
         let _ = tokio::fs::remove_dir_all(&root).await;
         let path = root.join("liked.json");
         let mut songs = loaded(50, 100);

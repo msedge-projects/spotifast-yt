@@ -6,7 +6,7 @@ nav_order: 1
 
 ## Independent grants, once each
 
-Spotifast uses separate credentials for Web API access, a personal app, and
+Musify uses separate credentials for Web API access, a personal app, and
 local playback:
 
 1. **The shared Web API app** keeps full catalogue and playlist coverage.
@@ -94,11 +94,11 @@ track transitions and pause/resume retain that history.
 Since 0.8.0, requests that need a grant still being
 verified wait for it instead of showing "not signed in". Sign-out cancels
 pending requests, and their late results cannot undo a new sign-in. If Spotify
-rejects a saved refresh grant, Spotifast removes that grant and asks for a new
+rejects a saved refresh grant, Musify removes that grant and asks for a new
 browser approval. Upgrading to protected storage does not itself require
 signing in again.
 
-By default, Spotifast uses the public app shared with spotify-player, ncspot,
+By default, Musify uses the public app shared with spotify-player, ncspot,
 and Omarchy Spotify. Spotify divides its quota among all users. A personal app
 adds a separate Development Mode quota. Playback state is checked every 15
 seconds, every 20 while this computer's player is active, every 30 while the
@@ -133,7 +133,7 @@ stay visible. A failed page stops automatic loading. Spotify custom playlist
 order uses the existing account-scoped rootlist from local playback; sorting
 and dragging never write that order back to Spotify. When the window regains
 focus, or is shown again from the tray, after every playlist page has loaded,
-Spotifast reads the rootlist again over the playback session, at most once
+Musify reads the rootlist again over the playback session, at most once
 every 5 seconds, so an order changed in another Spotify app appears without a
 restart. A return sooner than that reads once the 5 seconds have passed. This
 read uses no Web API quota.
@@ -157,7 +157,7 @@ current-track pickup.
 - Since 0.8.0, shared and personal Web API grants
   and the reusable playback credential use the platform credential store:
   Secret Service on Linux, Keychain on macOS, and Credential Manager on
-  Windows. Librespot retains its reusable credential in memory; Spotifast
+  Windows. Librespot retains its reusable credential in memory; Musify
   owns persistence. Flatpak can talk to `org.freedesktop.secrets` for this.
   Version 0.7.1 still uses the older unencrypted files.
   See [migration, sign-out, and storage protection](/settings-and-files/).
@@ -178,7 +178,7 @@ current-track pickup.
   prefixes refresh through the existing Web API grant, one page at a time,
   while the saved rows remain visible. Manual refresh starts immediately.
   Like and Unlike are kept over lagging reads until Spotify confirms them.
-- Spotifast has no telemetry, analytics, or hosted service. When the lyrics
+- Musify has no telemetry, analytics, or hosted service. When the lyrics
   panel is open and Spotify has no lyrics, it sends the track's artist, title,
   album, and length to [lrclib.net](https://lrclib.net). It also checks
   api.github.com once a day for updates. You can turn off automatic checks in
@@ -193,7 +193,7 @@ current-track pickup.
   `checksums.txt` and `checksums.txt.sig` from the project's GitHub release. It
   verifies the manifest's Ed25519 signature against its embedded publisher key
   before downloading the matching binary archive, Windows installer, or universal
-  macOS DMG. Spotifast then checks the published SHA-256 digest and the portable
+  macOS DMG. Musify then checks the published SHA-256 digest and the portable
   executable's reported version before offering a restart.
   Automatic downloads are optional; installation always waits for your click.
   Checks and downloads do not open the update popup. The green update pill opens
@@ -201,7 +201,7 @@ current-track pickup.
   No Spotify credential is sent. Missing or invalid publisher signatures are
   rejected; the updater does not fall back to trusting unsigned checksums.
 
-  Updates stage their files in a private `.spotifast-update-*` directory beside
+  Updates stage their files in a private `.musify-update-*` directory beside
   the application so replacement stays on the same filesystem. The directory
   retains the previous executable or Mac app bundle and `result.txt` for recovery and diagnosis.
   Helper startup errors are retained in `helper.log`. On macOS the helper runs
@@ -217,7 +217,7 @@ current-track pickup.
 ## Collection loading and artwork
 
 Since 0.9.0, opening a playlist, album, artist, or podcast keeps any
-title, summary, and cover Spotifast already knows while the complete page is
+title, summary, and cover Musify already knows while the complete page is
 requested. Controls that need unfinished details stay disabled, and a loading
 indicator marks the unfinished content. If the request fails, the known header
 stays above **Retry**. A direct link with no known details shows only the normal
@@ -248,7 +248,7 @@ rows are placeholders until their page arrives; scrolling never starts playback.
 ## When Spotify pushes back
 
 Each Web API session has separate concurrency and rate limits. A `Retry-After`
-response pauses only that session. Spotifast routes each request once and
+response pauses only that session. Musify routes each request once and
 does not retry it through the other app. A playlist read the librespot session
 refuses outright, because the playlist is gone or private, is shown as such. A
 dropped connection, a read that takes longer than 30 seconds, or a page whose
@@ -262,11 +262,11 @@ limits, the sidebar and Home show what they last showed for the account,
 from the cache described in [Settings & Files](/settings-and-files/).
 
 Spotify can also explicitly refuse the key needed to decrypt a track. When
-that happens, Spotifast stops local playback and leaves the rest of the queue
+that happens, Musify stops local playback and leaves the rest of the queue
 alone instead of treating every following track as unavailable. This refusal
 comes from Spotify; trying again later may work.
 
-Before adding songs to an existing playlist, Spotifast checks the rows it
+Before adding songs to an existing playlist, Musify checks the rows it
 already holds. A known duplicate produces an immediate confirmation naming the
 song. Only a playlist that has not been fully loaded needs a background scan to
 rule out duplicates. Once confirmed, the new rows appear locally at once.
@@ -276,7 +276,7 @@ through the same Web API grant. Duplicate checks and confirmation retain that
 position; partial loaded pages keep the correct continuation offset. A
 successful write advances the cached playlist to Spotify's returned snapshot
 instead of downloading the playlist again. If Spotify cannot answer the scan,
-Spotifast preserves the requested edit and lets the write report its result.
+Musify preserves the requested edit and lets the write report its result.
 
 Since 0.8.0, manually reloading an edited playlist waits for all
 pending writes and confirmation of the returned Spotify revision before
@@ -321,7 +321,7 @@ append might already have succeeded.
 ## Playlist cover uploads
 
 Since 0.9.0, **Edit details → Change cover** opens the native file
-picker. Spotifast reads only the selected JPEG or PNG, preserves its aspect ratio, flattens transparent
+picker. Musify reads only the selected JPEG or PNG, preserves its aspect ratio, flattens transparent
 pixels onto white, and encodes a JPEG preview. Files must be smaller than 20 MB
 and no larger than 8192 pixels per side, within a 128 MB decoding budget.
 Encoding reduces the image to fit
@@ -331,7 +331,7 @@ Spotify; **Save** separately saves the name, description, and visibility.
 Uploads use the same shared or personal app routing as playlist edits. Requests
 are not retried through another app. The uploaded image stays visible while
 Spotify propagates its artwork. A changed URL can still contain an earlier
-upload, so Spotifast checks the largest returned image through its normal
+upload, so Musify checks the largest returned image through its normal
 artwork cache, off the UI thread. Only matching image bytes or decoded pixels
 replace the temporary preview. It makes at most three immediate metadata
 rechecks; if Spotify is still catching up or the check fails, the preview stays
@@ -339,7 +339,7 @@ and a later page refresh can check again. Once confirmed, later cover changes
 from other clients can appear. The selected source file is not copied to the
 cache or settings.
 
-Image uploads require renewed Web API consent. If Spotifast asks you to sign
+Image uploads require renewed Web API consent. If Musify asks you to sign
 in again after updating, approve the image upload permission. Reconnect your
 personal app in Settings too, if you use one. Local playback authorization is
 unchanged. Spotify can refuse changes to playlists you do not own.
@@ -360,19 +360,19 @@ seconds overall after discovery. Only responding receivers with a name and
 ID are offered. Matching IDs are combined; separate devices can have the
 same name. These reads send no account credential.
 
-When a receiver is selected, Spotifast encrypts the stored librespot credential
+When a receiver is selected, Musify encrypts the stored librespot credential
 with a receiver-specific key and a key from a Diffie-Hellman exchange. The
-encrypted value only works for that receiver and exchange. Spotifast does not
+encrypted value only works for that receiver and exchange. Musify does not
 save another copy of the credential.
 
-The receiver then signs in and appears in Spotify's device list. Spotifast
+The receiver then signs in and appears in Spotify's device list. Musify
 uses the Web API for subsequent control requests.
 
 ### Restricted devices and Sonos
 
 Spotify marks some devices as restricted, Sonos players among them. The Web
 API refuses every player command for one with "Restriction violated" and
-leaves an idle one out of the device list. Spotifast sends commands for a
+leaves an idle one out of the device list. Musify sends commands for a
 restricted device over the playback session's Connect state service instead,
 as Spotify's own apps do: a transfer, then player commands (play, pause,
 resume, skip, seek, shuffle, repeat, queue) and volume, all sent from this
@@ -393,7 +393,7 @@ control another device.
 A Sonos is recognised by its receiver endpoint (`/spotifyzc` on port 1400)
 and is offered in the picker from the network even while Spotify does not list
 it. Its receiver asks for an OAuth authorization code instead of the librespot
-credential. Spotifast does not send a login blob or access token to that HTTP
+credential. Musify does not send a login blob or access token to that HTTP
 endpoint. Transfer and player commands go through Spotify using the existing
 playback session. Other receivers keep the encrypted login blob described above.
 
@@ -401,11 +401,11 @@ playback session. Other receivers keep the encrypted login blob described above.
 
 Cast speakers, displays and speaker groups announce `_googlecast._tcp`, not
 `_spotify-connect._tcp`. They do not run Spotify until a sender starts it.
-Spotifast lists them under their Cast name (the `fn` record) without probing
+Musify lists them under their Cast name (the `fn` record) without probing
 them, because probing one would start Spotify on it.
 
 Starting Spotify on a Cast device needs local playback enabled, because the
-playback session obtains the token. When a Cast device is selected, Spotifast
+playback session obtains the token. When a Cast device is selected, Musify
 follows the steps of Spotify's own apps:
 
 1. It opens a Cast v2 connection to the device, checks that the device is a
@@ -413,35 +413,35 @@ follows the steps of Spotify's own apps:
 2. The receiver's `getInfo` reply names the Spotify client it runs as.
 3. The librespot session asks Spotify for a token issued to that client and
    to the device's ID (`/device-auth/v1/refresh`, an internal endpoint).
-4. Spotifast sends that token to the receiver with `addUser`.
+4. Musify sends that token to the receiver with `addUser`.
 
 The device ID is the MD5 hash of the Cast name, as in Spotify's apps. The
 device then appears in Spotify's device list, and the Web API controls it
 like any other device. Right after an earlier sign-in, a receiver can
-refuse the first attempt, so Spotifast tries once more. A device that does
+refuse the first attempt, so Musify tries once more. A device that does
 not answer within 20 seconds is reported as not answering.
 
 A Cast device presents a TLS certificate of its own, which system trust stores
 do not hold, so the connection accepts any certificate. Since 0.13.1, before
-sending anything else, Spotifast asks the device to prove it is genuine, as
+sending anything else, Musify asks the device to prove it is genuine, as
 Chrome does. It
 sends a random challenge on Cast's `deviceauth` channel. The device signs the
 challenge and the certificate of this connection with its device key, and
-sends that key's certificate chain. Spotifast checks that the chain leads to
+sends that key's certificate chain. Musify checks that the chain leads to
 one of Google's two Cast root certificates, which it carries, that the device
 certificate is one for signing, and that the signature is valid. Because only
 that signature vouches for the connection's certificate, the connection's
 certificate must also be valid now and for no more than four more days, as
-Chrome requires. If any check fails, Spotifast stops. It does not start
+Chrome requires. If any check fails, Musify stops. It does not start
 Spotify on the device or ask for a token, and it reports that the device could
 not prove it is genuine. As in Chrome, older devices that sign with SHA-1 are
 accepted, and the revocation list a device may send with its answer is not
-checked (Chrome only checks it when told to require one). Spotifast 0.13.0
+checked (Chrome only checks it when told to require one). Musify 0.13.0
 made no such check: whatever answered at the address of the selected device
 received the token.
 
 The token is issued for the Spotify client and device ID that the receiver
-names in its `getInfo` reply, not the reusable playback credential. Spotifast
+names in its `getInfo` reply, not the reusable playback credential. Musify
 does not save or log the token.
 
 ## The engine
@@ -450,7 +450,7 @@ Playback runs on a separate runtime. Librespot maintains the Spotify Connect
 session, exposes this computer as a device, receives transfers, and reports
 playback state. If the session drops, it reconnects with the stored credential.
 On macOS, while the system reports no route to the internet at all, the
-reconnection waits for one instead of retrying. Spotifast asks the system
+reconnection waits for one instead of retrying. Musify asks the system
 about the internet as a whole rather than about a Spotify host, so the check
 looks up no name and sends nothing over the network.
 
@@ -464,7 +464,7 @@ Spotify rejects the approval, playback is set up again, or you sign out.
 approval; the browser opens only when there is none or Spotify rejects it.
 
 On macOS, local playback and track loading declare a user-initiated activity
-so App Nap does not throttle them when another application covers Spotifast.
+so App Nap does not throttle them when another application covers Musify.
 Pausing, stopping, an output error, or disconnecting releases the activity;
 remote playback does not hold it. The activity permits idle system sleep
 and does not keep the display awake.
@@ -477,12 +477,12 @@ no additional authorization. An old or unavailable Web API playback snapshot
 does not cause the previous local song to restart or replace the remote queue.
 
 When the PulseAudio backend is selected on Linux, its PulseAudio or PipeWire
-stream is named **Spotifast**, with **Spotify playback** as its description, so
+stream is named **Musify**, with **Spotify playback** as its description, so
 system mixers and audio processors can identify and route it. Explicit
 `PULSE_PROP_application.name` and `PULSE_PROP_stream.description` environment
 values take precedence.
 The same session checks releases that the Web API calls `single`, so confirmed
-EPs can carry their precise label. Spotifast deduplicates these checks while
+EPs can carry their precise label. Musify deduplicates these checks while
 the app session is active. If the engine reconnects, an interrupted check may
 be tried again; if metadata is unavailable, its label stays `Single`.
 
@@ -493,7 +493,7 @@ inbound ports have to be open.
 
 Each socket setup and handshake shares a five-second deadline. The pinned
 librespot version can try up to six access points and retry each connection
-once. Spotifast allows 75 seconds for the whole engine connection, giving
+once. Musify allows 75 seconds for the whole engine connection, giving
 stalled endpoints more time to fall back. Resolving access points,
 authentication, and other setup also use that outer deadline, so reaching
 every fallback endpoint is not guaranteed.
@@ -522,7 +522,7 @@ Since 0.9.0, Settings → Proxy has four modes:
   Spotify hostnames are resolved by that proxy.
 
 The mode selects the protocol. Host and port are separate fields.
-These settings apply to Spotifast's requests. The external browser used
+These settings apply to Musify's requests. The external browser used
 for Spotify approval keeps its own network and proxy settings.
 
 The Web API, artwork, lyrics, update checks and downloads, and MilkDrop preset

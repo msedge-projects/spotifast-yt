@@ -49,7 +49,7 @@ mod tests {
 
     fn root(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
-            "spotifast-account-cache-{name}-{}-{:?}",
+            "musify-account-cache-{name}-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ))

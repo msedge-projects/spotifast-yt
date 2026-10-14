@@ -4,7 +4,7 @@ description: Shared packaging automation and application-specific release defini
 nav_order: 20
 ---
 
-Spotifast keeps release asset definitions, nFPM configuration and native AUR and
+Musify keeps release asset definitions, nFPM configuration and native AUR and
 Homebrew templates in `native-packages.yaml` and `packaging/`. Common automation comes from the pinned
 [native-packages](https://github.com/crmne/native-packages) gem, installed with `gem install native-packages --version 0.9.0`.
 
@@ -17,7 +17,7 @@ Ubuntu 24.04, Debian 13, Fedora 41 and current Fedora on amd64 and arm64, includ
 the GUI libraries loaded at runtime. They do not exercise desktop rendering or
 Spotify playback. Release checks run after the packages are attached.
 
-On main, after 0.8.0, Linux launcher and icon filenames use Spotifast, as does
+On main, after 0.8.0, Linux launcher and icon filenames use Musify, as does
 the application's window identity. Historical release fixtures retain their
 original matching filenames and window class because their binaries are
 unchanged. Packaging regressions cover current and historical inputs;
@@ -27,21 +27,21 @@ The application retains its Flatpak manifests, macOS bundle/signing configuratio
 and Windows installer sources. nFPM does not replace these platform tools.
 
 Releases after 0.12.0 install on Windows through a per-user Windows Installer
-package (`.msi`, built with the WiX Toolset from `packaging/windows/spotifast.wxs`)
+package (`.msi`, built with the WiX Toolset from `packaging/windows/musify.wxs`)
 that needs no administrator password. The first of them also ships the earlier
 Inno Setup program (`-setup.exe`), which older versions update through. The
 package takes over a copy the setup program installed: the same folder, links
 and Start menu entry, with one entry under installed apps and settings kept.
 
-If the installed `spotifast.exe` is running, uninstalling removes nothing until
+If the installed `musify.exe` is running, uninstalling removes nothing until
 it is closed. The package asks whether to close it (Yes), check again once you
-have quit it (No) or cancel; the setup program offers Retry, Close Spotifast or
+have quit it (No) or cancel; the setup program offers Retry, Close Musify or
 Cancel. Closing ends the installed copy immediately, so unsaved changes may be
 lost. A silent uninstall stops without removing files, while a silent update
 closes the installed copy first. A portable copy elsewhere is never closed and
 never blocks either.
 Uninstalling the package also removes the folders the updater stages updates
-in (`.spotifast-update-*` inside the installation folder); an update keeps
+in (`.musify-update-*` inside the installation folder); an update keeps
 them, since the updater runs the package from one.
 See the repository's [maintainer packaging guide](https://github.com/crmne/spotifast/blob/main/PACKAGING.md)
 for commands and the shared tool's [platform coverage](https://github.com/crmne/native-packages/blob/main/docs/platforms.md)

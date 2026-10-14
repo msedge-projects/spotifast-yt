@@ -1,14 +1,14 @@
-# Traditional Chinese translation of the Spotifast navigation pilot.
-# Distributed under the same MIT license as Spotifast.
+# Traditional Chinese translation of the Musify navigation pilot.
+# Distributed under the same MIT license as Musify.
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: Spotifast\n"
+"Project-Id-Version: Musify\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/spotifast/issues/new?"
 "template=translation.yml\n"
 "POT-Creation-Date: 2026-10-14 15:56+0200\n"
 "PO-Revision-Date: 2026-09-09 13:30+0000\n"
-"Last-Translator: Spotifast contributors\n"
+"Last-Translator: Musify contributors\n"
 "Language-Team: Traditional Chinese\n"
 "Language: zh_TW\n"
 "MIME-Version: 1.0\n"
@@ -284,8 +284,8 @@ msgid "Mute"
 msgstr "靜音"
 
 #: src/ui/player_bar.rs:874
-msgid "This device's volume can't be changed from Spotifast"
-msgstr "無法從 Spotifast 變更此裝置的音量"
+msgid "This device's volume can't be changed from Musify"
+msgstr "無法從 Musify 變更此裝置的音量"
 
 #: src/ui/player_bar.rs:894 src/ui/devices.rs:198
 msgid "Connect to a device"
@@ -388,8 +388,8 @@ msgstr "目前處於離線狀態"
 #: src/ui/collection.rs:1865 src/ui/collection.rs:2110 src/ui/home.rs:34
 #: src/ui/library.rs:262 src/ui/show.rs:63 src/ui/show.rs:109
 #: src/ui/show.rs:139
-msgid "Spotifast will reconnect automatically when your connection returns."
-msgstr "連線恢復後，Spotifast 將自動重新連線。"
+msgid "Musify will reconnect automatically when your connection returns."
+msgstr "連線恢復後，Musify 將自動重新連線。"
 
 #. Translators: Keep {error} unchanged. It is the original failure detail.
 #: src/ui/lyrics.rs:171 src/ui/lyrics.rs:404 src/ui/lyrics.rs:640
@@ -674,12 +674,12 @@ msgstr "{error}原始設定檔保持不變，變更的偏好設定尚未儲存�
 #. Translators: {version} is a version number such as 1.4.0.
 #: src/app.rs:2231
 #, rust-format
-msgid "Spotifast {version} is available"
-msgstr "Spotifast {version} 現已推出"
+msgid "Musify {version} is available"
+msgstr "Musify {version} 現已推出"
 
 #: src/app.rs:2248
-msgid "Spotifast is up to date"
-msgstr "Spotifast 已是最新版本"
+msgid "Musify is up to date"
+msgstr "Musify 已是最新版本"
 
 #. Translators: {error} is an error message.
 #: src/app.rs:2256
@@ -906,8 +906,8 @@ msgid "This song's album is not on Spotify"
 msgstr "這首歌曲所屬的專輯不在 Spotify 上"
 
 #: src/app.rs:7450
-msgid "Spotifast cannot open this kind of Spotify link"
-msgstr "Spotifast 無法開啟這類 Spotify 連結"
+msgid "Musify cannot open this kind of Spotify link"
+msgstr "Musify 無法開啟這類 Spotify 連結"
 
 #: src/app.rs:7698
 msgid "Nothing is playing. Pick something first"
@@ -1326,13 +1326,13 @@ msgstr "歌曲之間不插入靜音。"
 
 #: src/ui/settings.rs:556
 msgid ""
-"Spotifast hides to the system tray. Quit from the tray menu or with Ctrl+Q."
-msgstr "Spotifast 會隱藏到系統匣。可從系統匣選單或按 Ctrl+Q 結束。"
+"Musify hides to the system tray. Quit from the tray menu or with Ctrl+Q."
+msgstr "Musify 會隱藏到系統匣。可從系統匣選單或按 Ctrl+Q 結束。"
 
 #: src/ui/settings.rs:560
 msgid ""
-"Spotifast hides to the system tray. Quit from the tray menu or with Cmd+Q."
-msgstr "Spotifast 會隱藏到系統匣。可從系統匣選單或按 Cmd+Q 結束。"
+"Musify hides to the system tray. Quit from the tray menu or with Cmd+Q."
+msgstr "Musify 會隱藏到系統匣。可從系統匣選單或按 Cmd+Q 結束。"
 
 #: src/ui/settings.rs:567
 msgid "Checks GitHub once a day. No personal data is sent."
@@ -1491,8 +1491,8 @@ msgstr ""
 
 #: src/ui/settings.rs:951
 msgid ""
-"Draw Spotifast's own title bar and window buttons instead of the desktop's."
-msgstr "使用 Spotifast 自己的標題列和視窗按鈕，而不是桌面環境提供的。"
+"Draw Musify's own title bar and window buttons instead of the desktop's."
+msgstr "使用 Musify 自己的標題列和視窗按鈕，而不是桌面環境提供的。"
 
 #: src/ui/settings.rs:959
 msgid ""
@@ -1680,34 +1680,34 @@ msgstr "預設集"
 #: src/ui/settings.rs:1614
 #, rust-format
 msgid ""
-"None yet in {folder}. Add .milk files here. Spotifast downloads presets when "
+"None yet in {folder}. Add .milk files here. Musify downloads presets when "
 "MilkDrop first opens with an empty folder."
 msgstr ""
 "{folder} 中還沒有預設集。請將 .milk 檔案加入這裡。第一次開啟 MilkDrop 時若資"
-"料夾是空的，Spotifast 會下載預設集。"
+"料夾是空的，Musify 會下載預設集。"
 
 #. Translators: {folder} is the path of the MilkDrop presets folder.
 #: src/ui/settings.rs:1620
 #, rust-format
 msgid ""
-"One preset in {folder}. Add .milk files here. Spotifast downloads presets "
+"One preset in {folder}. Add .milk files here. Musify downloads presets "
 "when MilkDrop first opens with an empty folder."
 msgstr ""
 "{folder} 中有 1 個預設集。請將 .milk 檔案加入這裡。第一次開啟 MilkDrop 時若資"
-"料夾是空的，Spotifast 會下載預設集。"
+"料夾是空的，Musify 會下載預設集。"
 
 #. Translators: {count} is the number of presets, {folder} the path of the MilkDrop presets folder.
 #: src/ui/settings.rs:1626
 #, rust-format
 msgid ""
-"{count} preset in {folder}. Add .milk files here. Spotifast downloads "
+"{count} preset in {folder}. Add .milk files here. Musify downloads "
 "presets when MilkDrop first opens with an empty folder."
 msgid_plural ""
-"{count} presets in {folder}. Add .milk files here. Spotifast downloads "
+"{count} presets in {folder}. Add .milk files here. Musify downloads "
 "presets when MilkDrop first opens with an empty folder."
 msgstr[0] ""
 "{folder} 中有 {count} 個預設集。請將 .milk 檔案加入這裡。第一次開啟 MilkDrop "
-"時若資料夾是空的，Spotifast 會下載預設集。"
+"時若資料夾是空的，Musify 會下載預設集。"
 
 #: src/ui/settings.rs:1635
 msgid "Time per preset"
@@ -1974,8 +1974,8 @@ msgstr "無法載入 Omarchy 調色盤，將保留上次可用的外觀。詳情
 
 #: src/theme.rs:190
 msgid ""
-"Custom themes could not be loaded. Run spotifast reload-themes to try again."
-msgstr "無法載入自訂主題。請執行 spotifast reload-themes 再試一次。"
+"Custom themes could not be loaded. Run musify reload-themes to try again."
+msgstr "無法載入自訂主題。請執行 musify reload-themes 再試一次。"
 
 #: src/ui/artist.rs:32
 msgid "Popular"
@@ -2160,11 +2160,11 @@ msgstr "減少等待 Spotify 的時間"
 
 #: src/ui/dialogs.rs:41
 msgid ""
-"Spotifast's default connection shares Spotify's request limit with other "
+"Musify's default connection shares Spotify's request limit with other "
 "listeners. When it gets busy, loading music and using playback controls can "
 "take longer."
 msgstr ""
-"Spotifast 的預設連線會與其他聽眾共用 Spotify 的要求上限。繁忙時，載入音樂和使"
+"Musify 的預設連線會與其他聽眾共用 Spotify 的要求上限。繁忙時，載入音樂和使"
 "用播放控制項可能需要更久。"
 
 #: src/ui/dialogs.rs:42
@@ -2239,9 +2239,9 @@ msgstr "這個帳戶無法在這裡播放音樂"
 #: src/ui/dialogs.rs:213
 msgid ""
 "Playback needs Spotify Premium. Free accounts can browse and search, but "
-"cannot play music through Spotifast."
+"cannot play music through Musify."
 msgstr ""
-"播放需要 Spotify Premium。免費帳戶可以瀏覽和搜尋，但無法透過 Spotifast 播放音"
+"播放需要 Spotify Premium。免費帳戶可以瀏覽和搜尋，但無法透過 Musify 播放音"
 "樂。"
 
 #: src/ui/dialogs.rs:222
@@ -2585,10 +2585,10 @@ msgstr "使用 Spotify 登入"
 
 #: src/ui/login.rs:134
 msgid ""
-"Sign in through your browser. Spotifast never sees your password. Local "
+"Sign in through your browser. Musify never sees your password. Local "
 "playback needs Spotify Premium."
 msgstr ""
-"透過瀏覽器登入。Spotifast 永遠不會看到你的密碼。本機播放需要 Spotify "
+"透過瀏覽器登入。Musify 永遠不會看到你的密碼。本機播放需要 Spotify "
 "Premium。"
 
 #: src/ui/login.rs:167
@@ -2598,8 +2598,8 @@ msgstr "Proxy 設定"
 #. Translators: {version} is the app's version number, such as 1.2.0.
 #: src/ui/login.rs:188
 #, rust-format
-msgid "Spotifast {version} • not affiliated with Spotify"
-msgstr "Spotifast {version} • 與 Spotify 無關"
+msgid "Musify {version} • not affiliated with Spotify"
+msgstr "Musify {version} • 與 Spotify 無關"
 
 #: src/ui/mod.rs:462
 msgid "Minimize"
@@ -2823,8 +2823,8 @@ msgstr "想播放什麼？"
 
 #: src/ui/topbar.rs:521
 msgid ""
-"Spotifast is offline. Reconnecting automatically when connection returns."
-msgstr "Spotifast 處於離線狀態。連線恢復後將自動重新連線。"
+"Musify is offline. Reconnecting automatically when connection returns."
+msgstr "Musify 處於離線狀態。連線恢復後將自動重新連線。"
 
 #: src/ui/topbar.rs:548
 msgid "MilkDrop visualiser (Ctrl+Shift+K)"
@@ -2861,8 +2861,8 @@ msgid "Version {version} is available."
 msgstr "版本 {version} 現已推出。"
 
 #: src/ui/update.rs:19
-msgid "Update Spotifast"
-msgstr "更新 Spotifast"
+msgid "Update Musify"
+msgstr "更新 Musify"
 
 #: src/ui/update.rs:51
 msgid "Close update"
@@ -2887,8 +2887,8 @@ msgid "Ready to install"
 msgstr "可以安裝"
 
 #: src/ui/update.rs:115
-msgid "Music playing on this computer will stop when Spotifast restarts."
-msgstr "Spotifast 重新啟動時，這台電腦上正在播放的音樂將會停止。"
+msgid "Music playing on this computer will stop when Musify restarts."
+msgstr "Musify 重新啟動時，這台電腦上正在播放的音樂將會停止。"
 
 #: src/ui/update.rs:122
 msgid "Restart to update"
@@ -3207,29 +3207,29 @@ msgid "On Wayland, use your desktop's Keep Above shortcut or window rule."
 msgstr "在 Wayland 上，請使用桌面環境的「最上層顯示」快捷鍵或視窗規則。"
 
 #: src/window.rs:39
-msgid "Spotifast cannot open its window"
-msgstr "Spotifast 無法開啟視窗"
+msgid "Musify cannot open its window"
+msgstr "Musify 無法開啟視窗"
 
 #: src/window.rs:45
 msgid ""
-"On Windows on ARM, the OpenGL that Spotifast draws with comes from "
+"On Windows on ARM, the OpenGL that Musify draws with comes from "
 "Microsoft's OpenCL, OpenGL & Vulkan Compatibility Pack. Open its Microsoft "
 "Store page to install or repair it?"
 msgstr ""
-"在 ARM 版 Windows 上，Spotifast 用來繪製介面的 OpenGL 由 Microsoft 的 "
+"在 ARM 版 Windows 上，Musify 用來繪製介面的 OpenGL 由 Microsoft 的 "
 "OpenCL, OpenGL & Vulkan Compatibility Pack 提供。要開啟其 Microsoft Store 頁"
 "面以安裝或修復嗎？"
 
 #. Translators: Keep {url} exactly as written. It becomes the address
-#. of the Spotifast download page.
+#. of the Musify download page.
 #: src/window.rs:55
 #, rust-format
 msgid ""
-"Spotifast needs a graphics driver with OpenGL 2.0 or newer, and this PC or "
+"Musify needs a graphics driver with OpenGL 2.0 or newer, and this PC or "
 "virtual machine does not provide one. Install the graphics driver, or turn "
 "on GPU acceleration for the virtual machine. Open {url} to read more?"
 msgstr ""
-"Spotifast 需要支援 OpenGL 2.0 或更新版本的顯示卡驅動程式，而這台電腦或虛擬機"
+"Musify 需要支援 OpenGL 2.0 或更新版本的顯示卡驅動程式，而這台電腦或虛擬機"
 "器沒有提供。請安裝顯示卡驅動程式，或為虛擬機器開啟 GPU 加速。要開啟 {url} 了"
 "解更多嗎？"
 

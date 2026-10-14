@@ -1,4 +1,4 @@
-//! Spotifast desktop command.
+//! Musify desktop command.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 

@@ -14,22 +14,22 @@ use fastframe_update::{MacConfig, ReqwestTransport, UpdateConfig};
 
 pub const CONFIG: UpdateConfig = UpdateConfig {
     macos: MacConfig {
-        bundle_ids: &["rocks.spotifast.Spotifast"],
-        executable_names: &["Spotifast"],
+        bundle_ids: &["io.github.msedge_projects.Musify"],
+        executable_names: &["Musify"],
         legacy_bundle_names: &[],
     },
     // Releases publish an Ed25519 signature for checksums.txt. Require it
     // before downloading an update, using the release workflow's public key.
     publisher_key: Some(include_str!("../assets/update-public-key.hex")),
     ..UpdateConfig::new(
-        "crmne/spotifast",
-        "Spotifast",
-        "spotifast",
+        "msedge-projects/spotifast-yt",
+        "Musify",
+        "musify",
         env!("CARGO_PKG_VERSION"),
     )
 };
 
-/// An updater on Spotifast's HTTP client, through the configured proxy.
+/// An updater on Musify's HTTP client, through the configured proxy.
 pub fn updater(proxy: &crate::settings::ProxyConfig) -> anyhow::Result<Updater> {
     let builder = crate::http::blocking_builder(proxy).map_err(anyhow::Error::msg)?;
     Ok(Updater::new(CONFIG, ReqwestTransport::new(builder)?))

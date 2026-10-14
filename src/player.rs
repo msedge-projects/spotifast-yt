@@ -669,9 +669,9 @@ fn command_interrupts_audio(state: &LocalState, command: &PlayerCommand) -> bool
 
 /// The librespot backend a saved setting names, when this build has it.
 ///
-/// Spotifast's own output has always been saved as "rodio". librespot's
+/// Musify's own output has always been saved as "rodio". librespot's
 /// rodio backend is no longer built in, so that name, an empty setting and
-/// any backend this build lacks all play through Spotifast's own output.
+/// any backend this build lacks all play through Musify's own output.
 fn librespot_backend(name: Option<&str>) -> Option<audio_backend::SinkBuilder> {
     let name = name.filter(|name| *name != crate::sink::NAME)?;
     let builder = audio_backend::find(Some(name.to_string()));
@@ -1322,10 +1322,10 @@ mod tests {
     use librespot_core::SpotifyUri;
 
     /// Settings saved before librespot's rodio backend left the build name
-    /// "rodio", which has always meant Spotifast's own output; that and any
+    /// "rodio", which has always meant Musify's own output; that and any
     /// backend this build lacks still play, through that output.
     #[test]
-    fn an_old_rodio_setting_plays_through_spotifasts_own_output() {
+    fn an_old_rodio_setting_plays_through_musifys_own_output() {
         assert!(librespot_backend(Some("rodio")).is_none());
         assert!(librespot_backend(None).is_none());
         assert!(librespot_backend(Some("no-such-backend")).is_none());
@@ -1600,7 +1600,7 @@ mod tests {
     fn an_inactive_connect_device_keeps_its_engine_session() {
         let mut state = LocalState {
             connected: true,
-            active_client: "Spotifast".into(),
+            active_client: "Musify".into(),
             ..LocalState::default()
         };
 
@@ -1647,7 +1647,7 @@ mod tests {
             buffer_ms: crate::sink::DEFAULT_BUFFER_MS,
             tap: AudioTap::new(),
             eq: crate::eq::shared(),
-            device_name: "Spotifast".into(),
+            device_name: "Musify".into(),
             bitrate_kbps: 320,
             normalisation: false,
             autoplay: true,

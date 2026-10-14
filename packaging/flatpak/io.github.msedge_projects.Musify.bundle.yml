@@ -1,0 +1,37 @@
+# The release workflow's Flatpak: the binary the Linux job built, packaged
+# into the same sandbox as io.github.msedge_projects.Musify.yml describes. The
+# job unpacks the release tarball into built/ beside this file first.
+id: io.github.msedge_projects.Musify
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: musify
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --socket=pulseaudio
+  - --share=network
+  # Platform storage for this application's Spotify grants.
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --own-name=org.mpris.MediaPlayer2.musify
+  - --persist=.local/state
+modules:
+  - name: musify
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 musify /app/bin/musify
+      - install -Dm644 packaging/applications/*.desktop /app/share/applications/io.github.msedge_projects.Musify.desktop
+      - sed -i 's/^Icon=.*$/Icon=io.github.msedge_projects.Musify/;s/^StartupWMClass=musify$/StartupWMClass=io.github.msedge_projects.Musify/' /app/share/applications/io.github.msedge_projects.Musify.desktop
+      - install -Dm644 packaging/icons/*.svg /app/share/icons/hicolor/scalable/apps/io.github.msedge_projects.Musify.svg
+      - install -Dm644 packaging/flatpak/io.github.msedge_projects.Musify.metainfo.xml /app/share/metainfo/io.github.msedge_projects.Musify.metainfo.xml
+      - install -Dm644 LICENSE /app/share/licenses/musify/LICENSE
+    sources:
+      - type: dir
+        path: built
+      # Metainfo belongs to this packaging checkout, not the portable archive.
+      - type: file
+        path: io.github.msedge_projects.Musify.metainfo.xml
+        dest: packaging/flatpak

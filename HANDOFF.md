@@ -4,14 +4,14 @@ Session handoff for continuing this project on another machine. Everything neede
 
 ## Mission
 
-A personal fork of Spotifast (native Rust Spotify client, egui UI) that lets a **free (non-Premium) Spotify account** play music, with audio streamed from YouTube instead of Spotify's servers. UI, browsing, playlists, and everything else stay Spotifast. Premium accounts keep the unmodified librespot engine. This fork is **personal**: upstream's `AGENTS.md` forbids alternate audio sources (that is a contribution/product policy for crmne's repository, not a license restriction; Spotifast is MIT). Do not upstream it; do not file issues about it.
+A personal fork of Spotifast (native Rust Spotify client, egui UI), renamed to **Musify**, that lets a **free (non-Premium) Spotify account** play music, with audio streamed from YouTube instead of Spotify's servers. UI, browsing, playlists, and everything else stay the upstream client's. Premium accounts keep the unmodified librespot engine. This fork is **personal**: upstream's `AGENTS.md` forbids alternate audio sources (that is a contribution/product policy for crmne's repository, not a license restriction; the fork is MIT). Do not upstream it; do not file issues about it.
 
 ## Non-negotiable constraints (from the user)
 
 - Free tier only; no Premium anywhere.
 - CPU is the hard constraint (machine: 2014-era i3-4150, 2C/4T). The user rejected download/transcode pipelines (ffmpeg bursts). The accepted design is a ~1 s flag-only `yt-dlp` resolve per track change plus ~1–3% of one core while mpv decodes.
 - ("no yt-dlp" was the user's wish, **proven impossible** — see Decisions. Do not retry removing it; do not propose heavier alternatives.)
-- Native Rust, light; no Electron; the UI stays Spotifast's.
+- Native Rust, light; no Electron; the UI stays the upstream client's.
 - Builds happen via GitHub Actions, not local compilation ("instead of compiling in my pc ... use actions").
 
 ## Where things are
@@ -28,7 +28,7 @@ A personal fork of Spotifast (native Rust Spotify client, egui UI) that lets a *
 - **No code changes yet.** The fork is pristine upstream aside from the above. Implementation has not started.
 - Baseline CI: at packing time the pristine `build` run (id 38610927318) and upstream's `CI` were both `in_progress` (~13 min; cold cache, large dependency tree). **Check before anything else:**
   `gh run list --repo msedge-projects/spotifast-yt`
-  - Green: pipeline proven. `gh run download <id> --repo msedge-projects/spotifast-yt` fetches artifact `spotifast-yt-windows-x64` (contains `spotifast.exe`).
+  - Green: pipeline proven. `gh run download <id> --repo msedge-projects/spotifast-yt` fetches artifact `musify-windows-x64` (contains `musify.exe`).
   - Red: `gh run view <id> --repo msedge-projects/spotifast-yt --log-failed`. Likely causes: git dependency fetch (all are public `crmne/*` repos) or a toolchain quirk (repo pins Rust 1.98.0 via `rust-toolchain.toml`; CI installs it automatically).
   - Git dependency revisions, for diagnosis: fastframe `v0.6.0`; egui `ba6790fe7cf46e58e8d27ce1524cbfdee745e938`; winit `ed7caa9023f10b397f5b6ec8284a840cbd8a6f65`; hyper-proxy2 `efca4811371ddae81c06be168de54194938d70b1`; librespot `847125198bb251d1d4497f46bebbfa4868b7d5d7`; projectm-rs `93852ff7299e5a63ed1315437593fc70915c0863` (milkdrop feature only; the workflow disables it).
 - **Get a green baseline before patching.**
@@ -51,15 +51,15 @@ jobs:
         run: cargo build --release --no-default-features
       - uses: actions/upload-artifact@v4
         with:
-          name: spotifast-yt-windows-x64
-          path: target/release/spotifast.exe
+          name: musify-windows-x64
+          path: target/release/musify.exe
           if-no-files-found: error
 ```
 
 ## Decisions already made (do not relitigate)
 
 1. **Native, no-subprocess YouTube streaming is impossible.** Proven live from the user's IP: every InnerTube client profile (Android / Android VR / Android Music / iOS / Web / TV-embed / Web-embed) answered HTTP 400 or `LOGIN_REQUIRED` ("Sign in to confirm you're not a bot") — YouTube's playback attestation (PoToken) wall. yt-dlp is the resolver in every workable design; its upkeep is the yt-dlp community's job.
-2. **Architecture (user approved):** per track change, `yt-dlp` resolves a direct audio URL in flag-only mode (`-g`; no download, no ffmpeg); an **mpv child process** decodes/plays it, driven over mpv's JSON IPC (Windows named pipe). This is Spotube's architecture rebuilt inside Spotifast.
+2. **Architecture (user approved):** per track change, `yt-dlp` resolves a direct audio URL in flag-only mode (`-g`; no download, no ffmpeg); an **mpv child process** decodes/plays it, driven over mpv's JSON IPC (Windows named pipe). This is Spotube's architecture rebuilt inside Musify.
 3. **Engine placement:** a second engine (`src/player_yt.rs`, `YtEngine`) lives BESIDE the librespot engine (`Worker.yt` in `backend.rs`). Free accounts route to it; the Premium path is untouched. Free accounts' Web API browsing/search/playlists already work without any engine (verified in code) — only audio was gated.
 4. **The app never advances tracks** — librespot's Spirc does that today. The YtEngine must own queue advancement (mpv EOF → next item, push `LocalState` with `track_sequence+1`); the app's existing `on_now_playing_changed` then consumes queue rows exactly as for Premium. `docs/_reference/queue.md` is the contract.
 5. **Metadata flow:** the engine cannot resolve `spotify:track:` URIs itself (no Web tokens). `LoadSpec` gains `tracks: Vec<LocalTrack>`; `PlayerCommand::AddToQueue` becomes `AddToQueue { uri, track: Option<LocalTrack> }`. For items that still lack metadata when their turn comes (long playlists), **defer**: park the item (Loading + placeholder track) and add `PlayerCommand::SetTrackMetadata { uri, track }`; the app already fetches `ApiRequest::Track` for a newly playing uncached uri (app.rs ≈3074-3081, cache insert ≈7215) — in YT mode it forwards the fetched metadata to the engine, which then resolves and plays. (v1 fallback if needed: rely on `track_cache` only and error on missing metadata — playlists will be hit-or-miss; the deferred design is the correct one.)
@@ -71,7 +71,7 @@ jobs:
 - `Cargo.toml`: tokio features += `"process"` ("net" already covers Windows named pipes).
 - `src/lib.rs`: `pub mod player_yt;`.
 - `src/player.rs`: `LoadSpec.tracks`; new `AddToQueue { uri, track }` payload; add `Heard::from_state(Arc<Mutex<LocalState>>)` pub(crate) constructor (its field is private; the YT engine hands volume over with it).
-- NEW `src/player_yt.rs`: `YtEngine` mirroring `Engine`'s surface (connect / command / shutdown / device_id / heard / interrupted / resume_point / resume; Toggle, Next, Previous, Seek, Volume, VolumePreview, Shuffle, Repeat, AddToQueue, ClearQueue, Load; Transfer = no-op). Internals: spawn mpv (`--idle=yes --no-video --no-terminal --really-quiet --input-ipc-server=\\.\pipe\spotifast-yt-<pid> --ytdl=no --volume=N`), connect the tokio named pipe, observe `time-pos` / `duration` / `pause`, handle `end-file` reasons (`eof` → advance; `error` → error state), guard double-advance, no seek when duration is 0. Volume: `u16` ↔ mpv percent = `v * 100 / 65535`. Resolve command: `yt-dlp --ignore-config --no-warnings --no-playlist --default-search ytsearch -f "bestaudio[ext=m4a]/bestaudio/best" -g -- "<title> <artists>"`, 30 s timeout, first stdout line. Tool discovery: PATH + known Windows fallbacks (`%LOCALAPPDATA%\Programs\mpv\mpv.exe`; `%LOCALAPPDATA%\Programs\Python\*\Scripts\yt-dlp.exe`).
+- NEW `src/player_yt.rs`: `YtEngine` mirroring `Engine`'s surface (connect / command / shutdown / device_id / heard / interrupted / resume_point / resume; Toggle, Next, Previous, Seek, Volume, VolumePreview, Shuffle, Repeat, AddToQueue, ClearQueue, Load; Transfer = no-op). Internals: spawn mpv (`--idle=yes --no-video --no-terminal --really-quiet --input-ipc-server=\\.\pipe\musify-<pid> --ytdl=no --volume=N`), connect the tokio named pipe, observe `time-pos` / `duration` / `pause`, handle `end-file` reasons (`eof` → advance; `error` → error state), guard double-advance, no seek when duration is 0. Volume: `u16` ↔ mpv percent = `v * 100 / 65535`. Resolve command: `yt-dlp --ignore-config --no-warnings --no-playlist --default-search ytsearch -f "bestaudio[ext=m4a]/bestaudio/best" -g -- "<title> <artists>"`, 30 s timeout, first stdout line. Tool discovery: PATH + known Windows fallbacks (`%LOCALAPPDATA%\Programs\mpv\mpv.exe`; `%LOCALAPPDATA%\Programs\Python\*\Scripts\yt-dlp.exe`).
 - `src/backend.rs` (line refs in the plan): `Worker.yt` field/init; `Command::YtEngineConnected` + handler; `Command::Player` routes to `yt` when `engine` is None; `start_yt_engine()` sibling of `connect_engine` (no browser, no grant; emits Connecting → Ready{device_id} / Failed); `authorize_playback` free branch → `start_yt_engine()`; `resume_engine` free branch → `start_yt_engine()`; `take_engine_for_resume` captures `yt.resume_point()`; `sign_out` and run-exit take `yt` down; NetworkStatus condition includes `yt`. Keep the hard gate at backend.rs:3306 (librespot 0.8 `exit(1)`s on free accounts — never call `Engine::connect` for free).
 - `src/app.rs`: `yt_playback: bool` flag (set where `ApiResponse::Me` reads `product` ≈5788-5801; suppress `Dialog::PremiumNeeded` for free); `Action::EnablePlayback` (≈10445) unifies: set `settings.playback_authorized` + send `Command::AuthorizePlayback` (the backend decides tier); `local_load` (≈11859) becomes a method: in YT mode materialize context loads via `context_track_uris` (≈7815) and fill `tracks` from `track_cache`; skip `autoplay_seed` (≈11892) in YT mode; queue paths (≈3028, 8838, 8888, 8916) use the new payload and `PlayerCommand` (not the Web API) in YT mode; update the free-account dialog test (≈25577 — it encodes the old blocking behavior).
 

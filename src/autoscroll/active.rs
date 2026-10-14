@@ -7,7 +7,7 @@
 
 use egui::{Context, Id, LayerId, Pos2, Rect, Response, ScrollArea, Ui, Vec2, ViewportId};
 
-const FRAME_ID: &str = "spotifast-autoscroll-frame";
+const FRAME_ID: &str = "musify-autoscroll-frame";
 /// Points the pointer may move on each axis before that axis scrolls.
 const DEAD_ZONE: f32 = 15.0;
 /// Chromium's speed is `distance ^ 2.2 * 0.000008` per fling unit, and its

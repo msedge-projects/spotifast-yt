@@ -11,23 +11,23 @@ libraries:
     deb: libasound2t64
     rpm: alsa-lib
 nfpm:
-  name: spotifast
+  name: musify
   maintainer: Carmine Paolino <carmine@paolino.me>
   homepage: https://github.com/crmne/spotifast
   description: A native Spotify client
   license: MIT
   contents:
   # A glob source makes nFPM append its basename to the destination directory.
-  - src: "@PAYLOAD@/*-v@VERSION@-@TARGET@/spotifast"
+  - src: "@PAYLOAD@/*-v@VERSION@-@TARGET@/musify"
     dst: "/usr/bin/"
     file_info:
       mode: 493
   - src: "@PAYLOAD@/*-v@VERSION@-@TARGET@/LICENSE"
-    dst: "/usr/share/licenses/spotifast/"
+    dst: "/usr/share/licenses/musify/"
     file_info:
       mode: 420
   - src: "@PAYLOAD@/*-v@VERSION@-@TARGET@/README.md"
-    dst: "/usr/share/doc/spotifast/"
+    dst: "/usr/share/doc/musify/"
     file_info:
       mode: 420
   - src: "@PAYLOAD@/*-v@VERSION@-@TARGET@/packaging/applications/*.desktop"
@@ -38,12 +38,12 @@ nfpm:
     dst: "/usr/share/icons/hicolor/scalable/apps/"
     file_info:
       mode: 420
-  - src: contrib/omarchy/spotifast.json.tpl
-    dst: /usr/share/spotifast/omarchy/spotifast.json.tpl
+  - src: contrib/omarchy/musify.json.tpl
+    dst: /usr/share/musify/omarchy/musify.json.tpl
     file_info:
       mode: 420
-  - src: contrib/omarchy/spotifast-theme
-    dst: /usr/share/spotifast/omarchy/spotifast-theme
+  - src: contrib/omarchy/musify-theme
+    dst: /usr/share/musify/omarchy/musify-theme
     file_info:
       mode: 493
   overrides:
@@ -101,7 +101,7 @@ targets:
       local: dist/macos-input
     native:
       command: [ruby, packaging/macos/dmg.rb, '@PAYLOAD@', '@PACKAGE@']
-      output: 'spotifast-@TAG@-macos-universal.dmg'
+      output: 'musify-@TAG@-macos-universal.dmg'
   linux-amd64:
     platform: linux
     arch: amd64
@@ -112,8 +112,8 @@ targets:
     - rpm
     - appimage
     input:
-      local: dist/spotifast-v@VERSION@-x86_64-unknown-linux-gnu.tar.gz
-      release_asset: spotifast-v@VERSION@-x86_64-unknown-linux-gnu.tar.gz
+      local: dist/musify-v@VERSION@-x86_64-unknown-linux-gnu.tar.gz
+      release_asset: musify-v@VERSION@-x86_64-unknown-linux-gnu.tar.gz
   linux-arm64:
     platform: linux
     arch: arm64
@@ -124,8 +124,8 @@ targets:
     - rpm
     - appimage
     input:
-      local: dist/spotifast-v@VERSION@-aarch64-unknown-linux-gnu.tar.gz
-      release_asset: spotifast-v@VERSION@-aarch64-unknown-linux-gnu.tar.gz
+      local: dist/musify-v@VERSION@-aarch64-unknown-linux-gnu.tar.gz
+      release_asset: musify-v@VERSION@-aarch64-unknown-linux-gnu.tar.gz
   # Windows Installer packages, built on each Windows release runner from the
   # binary it built; the input folder holds what the package installs.
   windows-amd64:
@@ -138,7 +138,7 @@ targets:
       local: dist/msi-input-x86_64-pc-windows-msvc
     native:
       command: [python, packaging/windows/build-msi.py, '@PAYLOAD@', '@PACKAGE@', '@VERSION@', '@ARCH@']
-      output: 'spotifast-@TAG@-@TARGET@.msi'
+      output: 'musify-@TAG@-@TARGET@.msi'
   windows-arm64:
     platform: windows
     arch: arm64
@@ -149,63 +149,63 @@ targets:
       local: dist/msi-input-aarch64-pc-windows-msvc
     native:
       command: [python, packaging/windows/build-msi.py, '@PAYLOAD@', '@PACKAGE@', '@VERSION@', '@ARCH@']
-      output: 'spotifast-@TAG@-@TARGET@.msi'
+      output: 'musify-@TAG@-@TARGET@.msi'
 release:
   repository: crmne/spotifast
   prereleases: true
   checksums: checksums.txt
 assets:
   AMD64:
-    file: spotifast-v@VERSION@-x86_64-unknown-linux-gnu.tar.gz
-    local: dist/spotifast-v@VERSION@-x86_64-unknown-linux-gnu.tar.gz
+    file: musify-v@VERSION@-x86_64-unknown-linux-gnu.tar.gz
+    local: dist/musify-v@VERSION@-x86_64-unknown-linux-gnu.tar.gz
   ARM64:
-    file: spotifast-v@VERSION@-aarch64-unknown-linux-gnu.tar.gz
-    local: dist/spotifast-v@VERSION@-aarch64-unknown-linux-gnu.tar.gz
+    file: musify-v@VERSION@-aarch64-unknown-linux-gnu.tar.gz
+    local: dist/musify-v@VERSION@-aarch64-unknown-linux-gnu.tar.gz
   SOURCE:
-    file: spotifast-v@VERSION@-source.tar.gz
-    local: dist/spotifast-v@VERSION@-source.tar.gz
+    file: musify-v@VERSION@-source.tar.gz
+    local: dist/musify-v@VERSION@-source.tar.gz
   MACOS:
-    file: spotifast-v@VERSION@-macos-universal.dmg
-    local: dist/spotifast-v@VERSION@-macos-universal.dmg
+    file: musify-v@VERSION@-macos-universal.dmg
+    local: dist/musify-v@VERSION@-macos-universal.dmg
 templates:
-  arch/spotifast/PKGBUILD: packaging/arch/spotifast/PKGBUILD.in
-  arch/spotifast/spotifast.install: packaging/arch/spotifast.install
-  arch/spotifast-bin/PKGBUILD: packaging/arch/spotifast-bin/PKGBUILD.in
-  arch/spotifast-bin/spotifast-bin.install: packaging/arch/spotifast.install
-  arch/spotifast-git/PKGBUILD: packaging/arch/spotifast-git/PKGBUILD.in
-  arch/spotifast-git/spotifast-git.install: packaging/arch/spotifast.install
-  homebrew/spotifast.rb: packaging/homebrew/spotifast.rb.in
+  arch/musify/PKGBUILD: packaging/arch/musify/PKGBUILD.in
+  arch/musify/musify.install: packaging/arch/musify.install
+  arch/musify-bin/PKGBUILD: packaging/arch/musify-bin/PKGBUILD.in
+  arch/musify-bin/musify-bin.install: packaging/arch/musify.install
+  arch/musify-git/PKGBUILD: packaging/arch/musify-git/PKGBUILD.in
+  arch/musify-git/musify-git.install: packaging/arch/musify.install
+  homebrew/musify.rb: packaging/homebrew/musify.rb.in
 repositories:
   aur-source:
     group: aur
-    url: https://aur.archlinux.org/spotifast.git
-    push_url: ssh://aur@aur.archlinux.org/spotifast.git
+    url: https://aur.archlinux.org/musify.git
+    push_url: ssh://aur@aur.archlinux.org/musify.git
     branch: master
     package_path: "."
     files:
-      arch/spotifast: "."
+      arch/musify: "."
     version_file: ".SRCINFO"
     version_pattern: "^\\s*pkgver = (\\S+)"
     publish: push
   aur-bin:
     group: aur
-    url: https://aur.archlinux.org/spotifast-bin.git
-    push_url: ssh://aur@aur.archlinux.org/spotifast-bin.git
+    url: https://aur.archlinux.org/musify-bin.git
+    push_url: ssh://aur@aur.archlinux.org/musify-bin.git
     branch: master
     package_path: "."
     files:
-      arch/spotifast-bin: "."
+      arch/musify-bin: "."
     version_file: ".SRCINFO"
     version_pattern: "^\\s*pkgver = (\\S+)"
     publish: push
   aur-git:
     group: aur
-    url: https://aur.archlinux.org/spotifast-git.git
-    push_url: ssh://aur@aur.archlinux.org/spotifast-git.git
+    url: https://aur.archlinux.org/musify-git.git
+    push_url: ssh://aur@aur.archlinux.org/musify-git.git
     branch: master
     package_path: "."
     files:
-      arch/spotifast-git: "."
+      arch/musify-git: "."
     version_file: ".SRCINFO"
     version_pattern: "^\\s*pkgver = (\\S+)"
     publish: push
@@ -215,8 +215,8 @@ repositories:
     branch: main
     package_path: Casks
     files:
-      homebrew/spotifast.rb: Casks/spotifast.rb
-    version_file: Casks/spotifast.rb
+      homebrew/musify.rb: Casks/musify.rb
+    version_file: Casks/musify.rb
     version_pattern: version "([^"]+)"
     publish: push
 version_file: Cargo.toml

@@ -1,10 +1,10 @@
 /*
  * The Windows Installer package's removal of what the updater leaves in the
- * installation folder (packaging/windows/spotifast.wxs runs
- * RemoveUpdateLeftovers just before RemoveFiles, only when Spotifast itself
+ * installation folder (packaging/windows/musify.wxs runs
+ * RemoveUpdateLeftovers just before RemoveFiles, only when Musify itself
  * is being uninstalled).
  *
- * fastframe-update stages each update in a .spotifast-update-<suffix> folder
+ * fastframe-update stages each update in a .musify-update-<suffix> folder
  * inside the installation folder: its helper, which runs the package, and a
  * copy of the previous version. It sweeps finished ones itself, but the last
  * one stays until the next update, and Windows Installer only removes the
@@ -34,7 +34,7 @@
 #include <string.h>
 #include <wchar.h>
 
-#define PREFIX L".spotifast-update-"
+#define PREFIX L".musify-update-"
 
 static void *allocate(SIZE_T bytes)
 {

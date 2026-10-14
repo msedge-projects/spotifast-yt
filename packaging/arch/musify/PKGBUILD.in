@@ -1,26 +1,26 @@
 # Maintainer: Carmine Paolino <carmine@paolino.me>
-pkgname=spotifast
+pkgname=musify
 pkgver=@VERSION@
 pkgrel=@PKGREL@
 pkgdesc="Native Spotify client"
 arch=('x86_64' 'aarch64')
-url="https://github.com/crmne/spotifast"
+url="https://github.com/msedge-projects/spotifast-yt"
 license=('MIT')
 install="${pkgname}.install"
 depends=('dbus' 'alsa-lib' 'libpulse' 'libglvnd' 'libxkbcommon' 'wayland' 'libx11')
 makedepends=('cargo' 'cmake' 'clang')
 optdepends=('libxkbcommon-x11: keyboard handling in X11 sessions'
             'pipewire-pulse: PipeWire as the PulseAudio server')
-conflicts=('spotifast-bin' 'spotifast-git')
+conflicts=('musify-bin' 'musify-git')
 # !lto because ring compiles its own C and Arch's default CFLAGS put LTO
 # objects in the archive, which lld then cannot resolve: the link fails on
 # undefined ring_core_* symbols.
 options=('!debug' '!lto')
-source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/spotifast-v${pkgver}-source.tar.gz")
+source=("${pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/musify-v${pkgver}-source.tar.gz")
 sha256sums=('@SOURCE_SHA256@')
 
 _source_dir() {
-  printf '%s\n' "${srcdir}/spotifast-${pkgver}"
+  printf '%s\n' "${srcdir}/musify-${pkgver}"
 }
 
 prepare() {
@@ -51,16 +51,16 @@ check() {
 package() {
   cd "$(_source_dir)"
 
-  install -Dm755 "target/release/spotifast" "${pkgdir}/usr/bin/spotifast"
+  install -Dm755 "target/release/musify" "${pkgdir}/usr/bin/musify"
   install -Dm644 "LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
   install -Dm644 "README.md" "${pkgdir}/usr/share/doc/${pkgname}/README.md"
-  install -Dm644 "packaging/applications/spotifast.desktop" \
-    "${pkgdir}/usr/share/applications/spotifast.desktop"
-  install -Dm644 "packaging/icons/spotifast.svg" \
-    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/spotifast.svg"
+  install -Dm644 "packaging/applications/musify.desktop" \
+    "${pkgdir}/usr/share/applications/musify.desktop"
+  install -Dm644 "packaging/icons/musify.svg" \
+    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/musify.svg"
   # Older release fixtures predate the optional integration.
   if [[ -d contrib/omarchy ]]; then
-    install -Dm644 contrib/omarchy/spotifast.json.tpl "${pkgdir}/usr/share/spotifast/omarchy/spotifast.json.tpl"
-    install -Dm755 contrib/omarchy/spotifast-theme "${pkgdir}/usr/share/spotifast/omarchy/spotifast-theme"
+    install -Dm644 contrib/omarchy/musify.json.tpl "${pkgdir}/usr/share/musify/omarchy/musify.json.tpl"
+    install -Dm755 contrib/omarchy/musify-theme "${pkgdir}/usr/share/musify/omarchy/musify-theme"
   fi
 }

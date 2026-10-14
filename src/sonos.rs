@@ -210,7 +210,7 @@ fn play_command(request: &PlayRequest) -> Value {
     json!({
         "endpoint": "play",
         "context": context,
-        "play_origin": { "feature_identifier": "spotifast" },
+        "play_origin": { "feature_identifier": "musify" },
         "options": options,
     })
 }

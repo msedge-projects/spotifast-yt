@@ -7,7 +7,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-APP_ID = "rocks.spotifast.Spotifast"
+APP_ID = "io.github.msedge_projects.Musify"
 
 
 def check_metainfo(contents, version):

@@ -1020,7 +1020,7 @@ pub enum Action {
         offset_index: Option<u32>,
     },
     /// Search one kind of thing and play the best match, as
-    /// `spotifast play-search` asks. Queued like the other play actions so
+    /// `musify play-search` asks. Queued like the other play actions so
     /// it takes precedence in the order it was asked for.
     PlaySearch {
         kind: String,
@@ -1250,7 +1250,7 @@ pub enum Action {
     SetSkinScale(u8),
     ToggleWinampOnTop,
     SetWinampTaskbar(bool),
-    /// Windows: draw Spotifast's own title bar instead of the standard one.
+    /// Windows: draw Musify's own title bar instead of the standard one.
     SetCustomTitlebar(bool),
     OpenSkinsFolder,
     /// Pick a different skin each time the mini player opens.

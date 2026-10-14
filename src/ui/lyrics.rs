@@ -143,7 +143,7 @@ fn contents(app: &mut App, ui: &mut egui::Ui) {
                     &gettext(app.locale, "You're offline"),
                     &gettext(
                         app.locale,
-                        "Spotifast will reconnect automatically when your connection returns.",
+                        "Musify will reconnect automatically when your connection returns.",
                     ),
                 );
             } else {
@@ -160,7 +160,7 @@ fn contents(app: &mut App, ui: &mut egui::Ui) {
                     &gettext(app.locale, "You're offline"),
                     &gettext(
                         app.locale,
-                        "Spotifast will reconnect automatically when your connection returns.",
+                        "Musify will reconnect automatically when your connection returns.",
                     ),
                 );
                 return;

@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
-    <linearGradient id="rim" x1="0" y1="2" x2="0" y2="126" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#18c055"/><stop offset="1" stop-color="#0c8a3a"/></linearGradient>
-    <linearGradient id="face" x1="0" y1="8" x2="0" y2="120" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#5cf095"/><stop offset="0.55" stop-color="#1ed760"/><stop offset="1" stop-color="#15b650"/></linearGradient>
-    <linearGradient id="edge" x1="0" y1="8" x2="0" y2="120" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#d9ffe8"/><stop offset="0.5" stop-color="#7bf0aa" stop-opacity="0.35"/><stop offset="1" stop-color="#0a6e2e" stop-opacity="0.9"/></linearGradient>
+    <linearGradient id="rim" x1="0" y1="2" x2="0" y2="126" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#c73333"/><stop offset="1" stop-color="#8a1d1d"/></linearGradient>
+    <linearGradient id="face" x1="0" y1="8" x2="0" y2="120" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f48a8a"/><stop offset="0.55" stop-color="#ef4444"/><stop offset="1" stop-color="#b62b2b"/></linearGradient>
+    <linearGradient id="edge" x1="0" y1="8" x2="0" y2="120" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ffe2e2"/><stop offset="0.5" stop-color="#f09b9b" stop-opacity="0.35"/><stop offset="1" stop-color="#6e1919" stop-opacity="0.9"/></linearGradient>
     <filter id="lift" color-interpolation-filters="sRGB" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="1.6"/><feOffset dy="1.6"/><feComponentTransfer><feFuncA type="linear" slope="0.35"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
   </defs>
   <circle cx="64" cy="64" r="62" fill="url(#rim)"/>

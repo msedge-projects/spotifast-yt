@@ -248,12 +248,13 @@ fn triangle_distance(p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32))
     if inside { 0.0 } else { d1.min(d2).min(d3) }
 }
 
-/// The mark on a 128-unit square, as `packaging/icons/spotifast.svg` draws
+/// The mark on a 128-unit square, as `packaging/icons/musify.svg` draws
 /// it: a disc of radius 62 and a play triangle with corners rounded by 5,
 /// set a little left of its box so it looks centred. `polished` adds the
 /// darker rim, the lit face and the bright edge between them.
 fn mark_rgba(size: usize, polished: bool) -> Vec<u8> {
-    const GREEN: [f32; 3] = [30.0, 215.0, 96.0];
+    // The brand red, matching the gradient stops in packaging/icons/musify.svg.
+    const BRAND: [f32; 3] = [239.0, 68.0, 68.0];
     const INK: [f32; 3] = [11.0, 14.0, 12.0];
     let mut rgba = vec![0u8; size * size * 4];
     // The disc keeps two pixels of margin, so its edge is never clipped.
@@ -270,12 +271,12 @@ fn mark_rgba(size: usize, polished: bool) -> Vec<u8> {
                 continue;
             }
             let mut colour = if polished {
-                let rim = mix([24.0, 192.0, 85.0], [12.0, 138.0, 58.0], (v - 2.0) / 124.0);
+                let rim = mix([199.0, 51.0, 51.0], [138.0, 29.0, 29.0], (v - 2.0) / 124.0);
                 let lit = (v - 8.0) / 112.0;
                 let face = if lit < 0.55 {
-                    mix([92.0, 240.0, 149.0], GREEN, lit / 0.55)
+                    mix([244.0, 138.0, 138.0], BRAND, lit / 0.55)
                 } else {
-                    mix(GREEN, [21.0, 182.0, 80.0], (lit - 0.55) / 0.45)
+                    mix(BRAND, [182.0, 43.0, 43.0], (lit - 0.55) / 0.45)
                 };
                 let on_face = ((54.4 - distance) * unit + 0.5).clamp(0.0, 1.0);
                 let mut colour = mix(rim, face, on_face);
@@ -283,14 +284,14 @@ fn mark_rgba(size: usize, polished: bool) -> Vec<u8> {
                 // the top, shaded at the bottom.
                 let edge = (1.0 - (distance - 55.0).abs() / 0.9).clamp(0.0, 1.0);
                 let (tone, strength) = if lit < 0.5 {
-                    ([217.0, 255.0, 232.0], 1.0 - 1.3 * lit)
+                    ([255.0, 226.0, 226.0], 1.0 - 1.3 * lit)
                 } else {
-                    ([10.0, 110.0, 46.0], 0.35 + 1.1 * (lit - 0.5))
+                    ([110.0, 25.0, 25.0], 0.35 + 1.1 * (lit - 0.5))
                 };
                 colour = mix(colour, tone, edge * strength.clamp(0.0, 1.0));
                 colour
             } else {
-                GREEN
+                BRAND
             };
             let triangle = triangle_distance((u, v), (49.2, 43.5), (49.2, 84.5), (86.1, 64.0));
             let glyph = ((5.0 - triangle) * unit + 0.5).clamp(0.0, 1.0);
@@ -374,22 +375,23 @@ mod tests {
         // #given the icon at a dock size and at a tray size
         let (large, small) = (app_icon_rgba(128), app_icon_rgba(32));
 
-        // #then both have a darker rim around a lighter face
+        // #then both have a darker rim around a lighter face (the red
+        // channel carries the contrast now that the brand is red)
         let rim = pixel(&large, 128, 64, 6);
         let face = pixel(&large, 128, 64, 20);
         assert!(
-            face[1] > rim[1],
+            face[0] > rim[0],
             "face {face:?} should be lighter than rim {rim:?}"
         );
-        assert!(pixel(&small, 32, 16, 6)[1] > pixel(&small, 32, 16, 2)[1]);
+        assert!(pixel(&small, 32, 16, 6)[0] > pixel(&small, 32, 16, 2)[0]);
         // #and a lit top fading to a deeper bottom
         let low = pixel(&large, 128, 64, 108);
-        assert!(face[1] > low[1]);
+        assert!(face[0] > low[0]);
 
         // #and both carry the dark triangle, a little right of centre
         for (icon, size) in [(&large, 128), (&small, 32)] {
             let centre = pixel(icon, size, size / 2 + size / 16, size / 2);
-            assert!(centre[1] < 40, "triangle missing at {size}: {centre:?}");
+            assert!(centre[0] < 60, "triangle missing at {size}: {centre:?}");
         }
 
         // #and the corners stay clear

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>rocks.spotifast.Spotifast</id>
-  <name>Spotifast</name>
+  <id>io.github.msedge_projects.Musify</id>
+  <name>Musify</name>
   <summary>A native Spotify client</summary>
   <developer id="me.paolino">
     <name>Carmine Paolino</name>
@@ -18,14 +18,15 @@
       Browse your library, search Spotify, edit playlists, manage the queue,
       and view lyrics. It also has keyboard shortcuts, media-key support,
       background playback, and a mini player for classic Winamp skins.
-      Playback needs Spotify Premium.
+      Playback on a free account streams from YouTube through yt-dlp and mpv;
+      a Premium account keeps the built-in engine.
     </p>
   </description>
-  <launchable type="desktop-id">rocks.spotifast.Spotifast.desktop</launchable>
-  <url type="homepage">https://spotifast.rocks/</url>
-  <url type="bugtracker">https://github.com/crmne/spotifast/issues</url>
-  <url type="help">https://spotifast.rocks/getting-started/</url>
-  <url type="vcs-browser">https://github.com/crmne/spotifast</url>
+  <launchable type="desktop-id">io.github.msedge_projects.Musify.desktop</launchable>
+  <url type="homepage">https://github.com/msedge-projects/spotifast-yt</url>
+  <url type="bugtracker">https://github.com/msedge-projects/spotifast-yt/issues</url>
+  <url type="help">https://github.com/msedge-projects/spotifast-yt</url>
+  <url type="vcs-browser">https://github.com/msedge-projects/spotifast-yt</url>
   <screenshots>
     <screenshot type="default">
       <caption>A playlist, with the queue open and a track playing on a remote speaker</caption>

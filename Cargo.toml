@@ -1,22 +1,22 @@
 [package]
-name = "spotifast"
-default-run = "spotifast"
+name = "musify"
+default-run = "musify"
 version = "0.13.2"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
-description = "A native Spotify client"
-repository = "https://github.com/crmne/spotifast"
+description = "A native Spotify client for free accounts, playing through YouTube"
+repository = "https://github.com/msedge-projects/spotifast-yt"
 keywords = ["spotify", "music", "egui", "librespot", "player"]
 categories = ["multimedia::audio"]
 
 [lib]
-name = "spotifast"
+name = "musify"
 path = "src/lib.rs"
 
 [[bin]]
-name = "spotifast"
-path = "src/spotifast.rs"
+name = "musify"
+path = "src/musify.rs"
 
 [dependencies]
 anyhow = "1"
@@ -35,7 +35,7 @@ keyring-core = "1"
 eframe = { version = "0.36", default-features = false, features = ["accesskit", "glow", "default_fonts", "links", "wayland", "x11", "persistence"] }
 egui = "0.36"
 egui_extras = { version = "0.36", features = ["image", "svg"] }
-# The shared foundation of Spotifast, ZapFast, RekordFlash and TonePush
+# The shared foundation of Musify, ZapFast, RekordFlash and TonePush
 # (crmne/fastframe). Every crate comes from the same revision; move them
 # together.
 fastframe-text = { git = "https://github.com/crmne/fastframe", tag = "v0.6.0" }
@@ -283,7 +283,7 @@ epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "ba6790fe7
 # crmne/winit apps-0.30, shared with the same apps: winit 0.30.13 plus Wayland
 # `Occluded` for the xdg-shell suspended state with commits on the app's behalf
 # while it isn't presenting (rust-windowing/winit#4709, #4710), macOS Quit
-# through close requests behind a feature Spotifast leaves off (winit#4692),
+# through close requests behind a feature Musify leaves off (winit#4692),
 # a macOS window ordered out and flushed before it closes, so a Touch Bar
 # cannot leave a ghost window behind (winit#4728), and file drag and drop on Wayland through the one data device egui's
 # clipboard also uses, since Hyprland gives the clipboard and drags only to an
@@ -295,13 +295,13 @@ winit = { git = "https://github.com/crmne/winit", rev = "ed7caa9023f10b397f5b6ec
 # which GitHub's windows-latest images no longer carry; the fork lets an
 # explicit CMAKE_GENERATOR win, and asks vcpkg for the target's architecture
 # so libprojectM links for Windows on ARM. Its libprojectM comes from
-# crmne/projectm's spotifast branch, which adds a length check on HLSL
+# crmne/projectm's musify branch, which adds a length check on HLSL
 # identifiers. Drop each when upstream releases it.
 projectm-sys = { git = "https://github.com/crmne/projectm-rs", rev = "93852ff7299e5a63ed1315437593fc70915c0863" }
 # hyper-proxy2's unreleased rustls 0.23 update plus our upstream provider
 # compatibility fix. Drop this fork when a release includes both changes.
 hyper-proxy2 = { git = "https://github.com/crmne/hyper-proxy2", rev = "efca4811371ddae81c06be168de54194938d70b1" }
-# crmne/librespot spotifast-dev: librespot's dev branch, which already has
+# crmne/librespot musify-dev: librespot's dev branch, which already has
 # the queue controls and the Windows on ARM login, plus the patches it has
 # not merged yet. Each is open as a librespot-org/librespot pull request:
 # normalisation-factor reporting for the visualisers (#1798), a stop and a

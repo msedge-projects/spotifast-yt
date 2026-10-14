@@ -2148,8 +2148,7 @@ mod ordering_tests {
     /// Create an isolated demo application with deliberately nonalphabetical rows
     /// and known recent plays so ordering tests can distinguish each sort mode.
     fn app(name: &str) -> App {
-        let root =
-            std::env::temp_dir().join(format!("spotifast-order-{name}-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("musify-order-{name}-{}", std::process::id()));
         let mut app = App::new(
             &crate::backend::Waker::default(),
             crate::paths::AppDirs {

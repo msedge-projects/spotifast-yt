@@ -6,7 +6,7 @@
 use librespot_core::{Session, SessionConfig};
 
 fn main() -> anyhow::Result<()> {
-    fastframe_log::Logging::new("spotifast", env!("CARGO_PKG_VERSION"))
+    fastframe_log::Logging::new("musify", env!("CARGO_PKG_VERSION"))
         .filter("info")
         .init()?;
     let mut args = std::env::args().skip(1);
@@ -14,8 +14,8 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("usage: cast_probe <address> <port> <friendly name>");
     };
 
-    let Some(spotifast::credentials::Grant::Playback(grant)) = stored_grant()? else {
-        anyhow::bail!("Enable playback in Spotifast first");
+    let Some(musify::credentials::Grant::Playback(grant)) = stored_grant()? else {
+        anyhow::bail!("Enable playback in Musify first");
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -29,11 +29,11 @@ fn main() -> anyhow::Result<()> {
 
     println!(
         "starting Spotify on {name} ({address}:{port}), device id {} ...",
-        spotifast::cast::device_id(&name)
+        musify::cast::device_id(&name)
     );
-    spotifast::cast::start(address.parse()?, port.parse()?, &name, |client, device| {
+    musify::cast::start(address.parse()?, port.parse()?, &name, |client, device| {
         println!("  clientID {client}, exchanging the session token ...");
-        let token = runtime.block_on(spotifast::cast::device_token(&session, client, device))?;
+        let token = runtime.block_on(musify::cast::device_token(&session, client, device))?;
         println!("  got a device token ({} chars)", token.len());
         Ok(token)
     })?;
@@ -41,14 +41,14 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn stored_grant() -> anyhow::Result<Option<spotifast::credentials::Grant>> {
+fn stored_grant() -> anyhow::Result<Option<musify::credentials::Grant>> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     let loaded = runtime.block_on(async {
-        let store = spotifast::credentials::Store::new(spotifast::paths::AppDirs::discover());
+        let store = musify::credentials::Store::new(musify::paths::AppDirs::discover());
         store
-            .lease(spotifast::credentials::Slot::Playback)
+            .lease(musify::credentials::Slot::Playback)
             .load()
             .await
     })?;

@@ -1,4 +1,4 @@
-//! Native counterpart of Spotify's countdown page, inside Spotifast's shell.
+//! Native counterpart of Spotify's countdown page, inside Musify's shell.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -230,7 +230,7 @@ pub(super) fn show(app: &mut App, ui: &mut egui::Ui, data: &Prerelease) {
                 if ui.button(gettext(locale, "Open in Spotify")).clicked() {
                     let id = data.uri.rsplit(':').next().unwrap_or_default();
                     app.actions.push(Action::OpenUrl(format!(
-                        "https://open.spotify.com/prerelease/{id}?spotifast_web=1"
+                        "https://open.spotify.com/prerelease/{id}?musify_web=1"
                     )));
                     ui.close();
                 }
@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn clicking_a_repeated_preview_track_starts_that_occurrence() {
         let root = std::env::temp_dir().join(format!(
-            "spotifast-prerelease-occurrence-{}",
+            "musify-prerelease-occurrence-{}",
             std::process::id()
         ));
         let ctx = egui::Context::default();

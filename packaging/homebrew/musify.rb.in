@@ -1,0 +1,21 @@
+cask "musify" do
+  version "@VERSION@"
+  sha256 "@MACOS_SHA256@"
+
+  url "https://github.com/msedge-projects/spotifast-yt/releases/download/v#{version}/musify-v#{version}-macos-universal.dmg"
+  name "Musify"
+  desc "Native Spotify client"
+  homepage "https://github.com/msedge-projects/spotifast-yt"
+
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  app "Musify.app"
+
+  zap trash: [
+    "~/Library/Application Support/me.paolino.musify",
+    "~/Library/Caches/me.paolino.musify",
+  ]
+end

@@ -1153,7 +1153,7 @@ pub fn marquee_text(
         return notice.to_string();
     }
     let Some(now) = now else {
-        return "Spotifast".to_string();
+        return "Musify".to_string();
     };
     if let Some(fraction) = seek_preview
         && now.duration_ms > 0
@@ -1573,7 +1573,7 @@ mod tests {
         );
         assert_eq!(
             marquee_text(Locale::English, None, None, None, None, None),
-            "Spotifast"
+            "Musify"
         );
         let untitled = now("Episode 12", "", 0);
         assert_eq!(
