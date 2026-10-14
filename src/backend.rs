@@ -29,6 +29,7 @@ use crate::paths::AppDirs;
 use crate::player::{
     Engine, EngineConfig, EngineEvent, Heard, LocalState, PlaybackResume, PlayerCommand,
 };
+use crate::player_yt::YtEngine;
 use crate::session_reads;
 use crate::settings::ProxyConfig;
 
@@ -694,6 +695,12 @@ pub enum Command {
         engine: Box<Option<Engine>>,
         error: Option<String>,
         lease: CredentialLease,
+        attempt: u64,
+    },
+    /// Internal: a YouTube-engine connection attempt finished.
+    YtEngineConnected {
+        engine: Box<Option<YtEngine>>,
+        error: Option<String>,
         attempt: u64,
     },
     /// OS reports network reachability changed.
@@ -1370,7 +1377,7 @@ impl Backend {
         #[cfg(test)]
         self.player_commands.lock().unwrap().push(command.clone());
         #[cfg(test)]
-        if let PlayerCommand::AddToQueue(uri) = &command {
+        if let PlayerCommand::AddToQueue { uri, .. } = &command {
             self.queued_tracks.lock().unwrap().push(uri.clone());
         }
         self.send(Command::Player(command));
@@ -1607,6 +1614,9 @@ struct Worker {
     commands: mpsc::UnboundedSender<Command>,
     waker: Waker,
     engine: Option<Arc<Engine>>,
+    /// The free-account YouTube engine, when the account is not Premium.
+    /// Exactly one of `engine` and `yt` is ever up.
+    yt: Option<Arc<YtEngine>>,
     /// What the engine is heard at, so the engine that replaces it starts
     /// there. `engine_config` alone knows only the level the app launched
     /// with.
@@ -1701,6 +1711,7 @@ impl Worker {
             commands,
             waker,
             engine: None,
+            yt: None,
             heard: None,
             rootlist_pending: false,
             album_type_lookup: AlbumTypeLookup::default(),
@@ -2021,9 +2032,16 @@ impl Worker {
                                 self.emit(Event::Error(format!("Playback error: {error}")));
                             }
                         }
-                        None => self.emit(Event::Error(
-                            "Local playback isn't set up on this computer yet".into(),
-                        )),
+                        None => match &self.yt {
+                            Some(yt) => {
+                                if let Err(error) = yt.command(command) {
+                                    self.emit(Event::Error(format!("Playback error: {error}")));
+                                }
+                            }
+                            None => self.emit(Event::Error(
+                                "Local playback isn't set up on this computer yet".into(),
+                            )),
+                        },
                     }
                 }
                 Command::Api(ApiRequest::Search { query, serial }) => self.search(query, serial),
@@ -2175,12 +2193,23 @@ impl Worker {
                         engine.shutdown();
                     }
                 }
+                Command::YtEngineConnected {
+                    engine,
+                    error,
+                    attempt,
+                } => {
+                    if self.signed_in {
+                        self.on_yt_engine_connected(*engine, error, attempt);
+                    } else if let Some(engine) = *engine {
+                        engine.shutdown();
+                    }
+                }
                 Command::NetworkStatus(reachable) => {
                     self.network_reachable = reachable;
                     self.emit(Event::NetworkStatus(reachable));
                     if !reachable {
                         self.waiting_for_network = true;
-                    } else if self.engine.is_some() {
+                    } else if self.engine.is_some() || self.yt.is_some() {
                         self.waiting_for_network = false;
                     } else if self.waiting_for_network && !self.engine_busy {
                         self.waiting_for_network = false;
@@ -2500,6 +2529,9 @@ impl Worker {
         }
         if let Some(engine) = self.engine.take() {
             engine.shutdown();
+        }
+        if let Some(yt) = self.yt.take() {
+            yt.shutdown();
         }
         drop(cache_writes);
         let _ = cache_writer.await;
@@ -2978,6 +3010,9 @@ impl Worker {
         if let Some(engine) = self.engine.take() {
             engine.shutdown();
         }
+        if let Some(yt) = self.yt.take() {
+            yt.shutdown();
+        }
         if let Some(cancel) = self.cancel_signin.take() {
             let _ = cancel.send(true);
         }
@@ -3027,12 +3062,19 @@ impl Worker {
 
     /// Bring the engine up from a credential stored by a previous playback
     /// authorization, if there is one. Silent when there is nothing to resume.
+    /// A free account has no grant: its engine is the YouTube one and comes
+    /// up on its own.
     fn resume_engine(&mut self) {
-        if !self.signed_in
-            || self.engine.is_some()
-            || self.engine_busy
-            || self.premium == Some(false)
-        {
+        if !self.signed_in || self.engine.is_some() || self.yt.is_some() || self.engine_busy {
+            return;
+        }
+        if self.premium == Some(false) {
+            if !self.network_reachable {
+                self.waiting_for_network = true;
+                self.emit(Event::Playback(LocalPlayback::WaitingForNetwork));
+                return;
+            }
+            self.start_yt_engine();
             return;
         }
         let credentials = self
@@ -3172,6 +3214,12 @@ impl Worker {
             self.resume = engine.resume_point();
             engine.shutdown();
         }
+        if let Some(yt) = self.yt.take() {
+            if self.resume.is_none() {
+                self.resume = yt.resume_point();
+            }
+            yt.shutdown();
+        }
     }
 
     /// Set up playback on this computer. A saved playback grant for this
@@ -3190,9 +3238,11 @@ impl Worker {
             return;
         }
         if self.premium == Some(false) {
-            self.emit(Event::Playback(LocalPlayback::Failed(
-                PREMIUM_NEEDED.into(),
-            )));
+            // Free accounts play through the YouTube engine. It needs no
+            // Spotify grant, so there is no browser round trip: bring it
+            // up (or back) directly.
+            self.authorize_if_rejected = false;
+            self.resume_engine();
             return;
         }
         let saved = self
@@ -3502,9 +3552,115 @@ impl Worker {
         }
     }
 
-    /// Starts the engine only for Premium accounts. librespot 0.8 calls
-    /// `exit(1)` for Free accounts, which cannot be caught. If the plan is
-    /// unknown, preserve the previous behavior and start the engine.
+    /// Brings up the free-account YouTube engine. It needs no grant: mpv
+    /// and yt-dlp are found on the machine and the engine starts idle.
+    fn start_yt_engine(&mut self) {
+        if self.engine_busy {
+            return;
+        }
+        self.engine_busy = true;
+        self.engine_attempt = self.engine_attempt.wrapping_add(1);
+        let attempt = self.engine_attempt;
+        if !self.engine_retry_quiet {
+            self.emit(Event::Playback(LocalPlayback::Connecting));
+        }
+        let config = self.engine_config.clone();
+        let notify = self.yt_notify();
+        let commands = self.commands.clone();
+        let waker = self.waker.clone();
+        tokio::spawn(async move {
+            let message = match YtEngine::connect(&config, notify).await {
+                Ok(engine) => Command::YtEngineConnected {
+                    engine: Box::new(Some(engine)),
+                    error: None,
+                    attempt,
+                },
+                Err(error) => {
+                    log::error!("YouTube engine connect failed: {error:#}");
+                    Command::YtEngineConnected {
+                        engine: Box::new(None),
+                        error: Some(format!("{error:#}")),
+                        attempt,
+                    }
+                }
+            };
+            let _ = commands.send(message);
+            waker.wake();
+        });
+    }
+
+    fn yt_notify(&self) -> crate::player::Notify {
+        let events = self.events.clone();
+        let commands = self.commands.clone();
+        let waker = self.waker.clone();
+        Arc::new(move |event| match event {
+            EngineEvent::State(state) => {
+                let _ = events.send(Event::Local(Box::new(state)));
+                waker.wake();
+            }
+            EngineEvent::SessionEnded => {
+                let _ = commands.send(Command::Reconnect);
+            }
+        })
+    }
+
+    fn on_yt_engine_connected(
+        &mut self,
+        engine: Option<YtEngine>,
+        error: Option<String>,
+        attempt: u64,
+    ) {
+        if !self.signed_in || attempt != self.engine_attempt {
+            if let Some(engine) = engine {
+                engine.shutdown();
+            }
+            return;
+        }
+        self.engine_busy = false;
+        if std::mem::take(&mut self.engine_restart_pending) {
+            if let Some(engine) = engine {
+                engine.shutdown();
+            }
+            // The newest config is already stored; connect again with it.
+            self.resume_engine();
+            return;
+        }
+        let quiet = std::mem::take(&mut self.engine_retry_quiet);
+        match engine {
+            Some(engine) => {
+                self.waiting_for_network = false;
+                self.pending_playback_grant = None;
+                self.cancel_engine_retry();
+                let device_id = engine.device_id().to_string();
+                let engine = Arc::new(engine);
+                self.heard = Some(engine.heard());
+                if let Some(spec) = self.resume.take() {
+                    // The pipe is already connected; the load can run now.
+                    let _ = engine.resume(spec);
+                }
+                self.yt = Some(engine);
+                self.reconnects.clear();
+                self.emit(Event::Playback(LocalPlayback::Ready { device_id }));
+            }
+            None => {
+                if !self.network_reachable {
+                    self.waiting_for_network = true;
+                    self.emit(Event::Playback(LocalPlayback::WaitingForNetwork));
+                } else {
+                    self.waiting_for_network = false;
+                    let message = error.unwrap_or_else(|| "Local playback is unavailable".into());
+                    if !quiet {
+                        self.emit(Event::Playback(LocalPlayback::Failed(message)));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Starts the engine for the account's plan: librespot for Premium (and
+    /// while the plan is unknown), the YouTube engine for Free. librespot
+    /// 0.8 calls `exit(1)` for Free accounts, which cannot be caught, so it
+    /// must never be connected for one.
     fn on_account_checked(&mut self, premium: Option<bool>) {
         self.premium = premium;
         if premium == Some(false) {
@@ -3515,13 +3671,16 @@ impl Worker {
                 engine.shutdown();
             }
             self.pending_playback_grant = None;
-            let credential_stored = self.playback_grant.is_some();
-            if credential_stored {
-                self.emit(Event::Playback(LocalPlayback::Failed(
-                    PREMIUM_NEEDED.into(),
-                )));
-            }
+            // Free accounts play through the YouTube engine, which needs no
+            // grant: bring it up if it is not already running (an engine
+            // already playing is left alone).
+            self.resume_engine();
             return;
+        }
+        // Premium (or still unknown) uses librespot. A running YouTube
+        // engine from a free session goes away first.
+        if let Some(yt) = self.yt.take() {
+            yt.shutdown();
         }
         self.resume_engine();
         // A sign-in restored over a running engine picks up the headers the

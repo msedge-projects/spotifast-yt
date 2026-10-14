@@ -240,6 +240,12 @@ impl LocalState {
 pub struct LoadSpec {
     pub context_uri: Option<String>,
     pub uris: Vec<String>,
+    /// The metadata for each URI in `uris`, in the same order. Filled by
+    /// the interface from its cache when the free-account YouTube engine
+    /// plays; a track whose title is empty is a placeholder the engine
+    /// fills later through [`PlayerCommand::SetTrackMetadata`]. librespot
+    /// reads its own metadata and ignores this.
+    pub tracks: Vec<LocalTrack>,
     pub offset_uri: Option<String>,
     pub offset_index: Option<u32>,
     pub position_ms: u32,
@@ -283,8 +289,21 @@ pub enum PlayerCommand {
     Previous,
     /// Remove manually queued tracks and keep context tracks.
     ClearQueue,
-    /// Queue a track or episode after the ones already queued.
-    AddToQueue(String),
+    /// Queue a track or episode after the ones already queued. `track`
+    /// carries the metadata the free-account engine searches with; `None`
+    /// when the app has not cached it yet (the engine defers the item and
+    /// asks through [`PlayerCommand::SetTrackMetadata`]).
+    AddToQueue {
+        uri: String,
+        track: Option<LocalTrack>,
+    },
+    /// The interface fetched the track a deferred queue item was waiting
+    /// for. The YouTube engine plays it now; librespot knows its own
+    /// metadata and ignores this.
+    SetTrackMetadata {
+        uri: String,
+        track: LocalTrack,
+    },
     Seek(u32),
     /// The volume to keep: applied at once and told to Spotify Connect.
     Volume(u16),
@@ -608,7 +627,9 @@ impl Engine {
             PlayerCommand::Next => spirc.next()?,
             PlayerCommand::Previous => spirc.prev()?,
             PlayerCommand::ClearQueue => spirc.clear_queue()?,
-            PlayerCommand::AddToQueue(uri) => spirc.add_to_queue(SpotifyUri::from_uri(&uri)?)?,
+            PlayerCommand::AddToQueue { uri, .. } => {
+                spirc.add_to_queue(SpotifyUri::from_uri(&uri)?)?
+            }
             PlayerCommand::Seek(position_ms) => spirc.set_position_ms(position_ms)?,
             PlayerCommand::Volume(volume) => self.note_volume(volume, false)?,
             PlayerCommand::VolumePreview(volume) => self.note_volume(volume, true)?,
@@ -628,6 +649,8 @@ impl Engine {
                 }
             },
             PlayerCommand::Transfer => spirc.transfer(None)?,
+            // librespot reads each track's metadata itself; nothing to set.
+            PlayerCommand::SetTrackMetadata { .. } => {}
             PlayerCommand::Load(spec) => {
                 let playing_track = spec
                     .offset_uri
@@ -766,6 +789,12 @@ pub(crate) struct Heard {
 }
 
 impl Heard {
+    /// The level kept by an engine's own state, for a replacement engine
+    /// that owns its state the same way.
+    pub(crate) fn from_state(state: Arc<Mutex<LocalState>>) -> Self {
+        Self { state }
+    }
+
     /// The level set last, which the state holds exactly: a level set here
     /// goes into the state with the mixer, and Connect reports every other
     /// change of the level.

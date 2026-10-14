@@ -39,6 +39,7 @@ pub mod notch;
 pub mod opener;
 pub mod paths;
 pub mod player;
+pub mod player_yt;
 pub mod playlist_cover;
 pub mod power;
 pub mod prerelease;

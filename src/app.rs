@@ -20,7 +20,9 @@ use crate::i18n::{Locale, gettext, ngettext};
 use crate::model::QueueTab;
 use crate::model::*;
 use crate::paths::AppDirs;
-use crate::player::{EngineConfig, LoadSpec, LocalState, Playback, PlayerCommand, RepeatMode};
+use crate::player::{
+    EngineConfig, LoadSpec, LocalState, LocalTrack, Playback, PlayerCommand, RepeatMode,
+};
 use crate::settings::{CachedRootlist, SessionState, Settings, ThemeChoice};
 use crate::single_instance::ControlCommand;
 use crate::theme::{self, Palette};
@@ -565,8 +567,9 @@ pub struct App {
     /// cascade and reconnect once instead of skipping through an album.
     unavailable_at: Vec<Instant>,
     last_unavailable_reconnect: Option<Instant>,
-    /// The Premium notice has been shown for this sign-in.
-    premium_notice_shown: bool,
+    /// The signed-in account is a free one: local playback goes through
+    /// the YouTube engine, and the Premium notice would be wrong.
+    pub yt_playback: bool,
     /// Context shown immediately after play, until Spotify confirms it. An
     /// empty URI means a plain track list, whose lack of a context must also
     /// hide stale state.
@@ -1049,7 +1052,7 @@ impl App {
             shuffle_set_at: None,
             unavailable_at: Vec::new(),
             last_unavailable_reconnect: None,
-            premium_notice_shown: false,
+            yt_playback: false,
             assumed_context: None,
             last_now_playing_uri: None,
             last_now_playing_sequence: 0,
@@ -2287,7 +2290,7 @@ impl App {
                 self.sign_in_url = None;
                 self.web_app = None;
                 self.user = None;
-                self.premium_notice_shown = false;
+                self.yt_playback = false;
                 self.local = LocalState::default();
                 self.local_ready = false;
                 self.local_device_id = None;
@@ -2690,12 +2693,14 @@ impl App {
                 }
             }
         }
-        if let Some(seed) = autoplay_seed(
-            self.local_list.as_deref(),
-            self.settings.autoplay,
-            &self.local,
-            &state,
-        ) {
+        if !self.yt_playback
+            && let Some(seed) = autoplay_seed(
+                self.local_list.as_deref(),
+                self.settings.autoplay,
+                &self.local,
+                &state,
+            )
+        {
             log::info!("the list ended; playing what Spotify follows {seed} with");
             self.local_list = None;
             self.backend.player(PlayerCommand::Load(LoadSpec {
@@ -3031,11 +3036,17 @@ impl App {
             if now.local && self.resume_track.as_deref() == Some(now.uri.as_str()) {
                 for uri in queued {
                     self.manual_queue.push(uri.clone());
-                    self.backend.api(ApiRequest::AddToQueue {
-                        uri,
-                        device_id: self.local_device_id.clone(),
-                        label: String::new(),
-                    });
+                    if self.yt_playback {
+                        let track = self.queued_track(&uri);
+                        self.backend
+                            .player(PlayerCommand::AddToQueue { uri, track });
+                    } else {
+                        self.backend.api(ApiRequest::AddToQueue {
+                            uri,
+                            device_id: self.local_device_id.clone(),
+                            label: String::new(),
+                        });
+                    }
                 }
             }
         }
@@ -5041,6 +5052,13 @@ impl App {
     }
 
     fn refresh_queue(&mut self, force: bool) {
+        // The YouTube engine's queue lives in the engine; Spotify knows
+        // nothing about it. The panel is fed from what the app itself
+        // knows (see `refresh_yt_queue`).
+        if self.yt_playback {
+            self.refresh_yt_queue();
+            return;
+        }
         if !self.is_connected() || !self.network_reachable {
             return;
         }
@@ -5060,6 +5078,36 @@ impl App {
         self.backend.api(ApiRequest::Queue {
             seq: self.queue_seq,
         });
+    }
+
+    /// The YouTube engine's queue as the app knows it: the songs the user
+    /// queued, then the rest of the playing context.
+    fn refresh_yt_queue(&mut self) {
+        let currently_playing = self.now_playing_item();
+        let mut rows: Vec<PlayableItem> = Vec::new();
+        for uri in self.manual_queue.clone() {
+            rows.push(self.optimistic_queue_item(&uri, &uri));
+        }
+        if let Some(context) = self.playing_context_uri()
+            && let Some(uris) = self.context_track_uris(&context)
+        {
+            let current = self.current_track_uri();
+            let mut after = false;
+            for uri in uris {
+                if Some(uri.as_str()) == current.as_deref() {
+                    after = true;
+                    continue;
+                }
+                if after {
+                    rows.push(self.optimistic_queue_item(&uri, &uri));
+                }
+            }
+        }
+        self.queue = Loadable::Loaded(Queue {
+            currently_playing,
+            queue: rows,
+        });
+        self.queue_fetched_at = Some(Instant::now());
     }
 
     /// A chosen row of Next up plays at once, and the rows above it go
@@ -5788,17 +5836,13 @@ impl App {
         match response {
             ApiResponse::Me(result) => match result {
                 Ok(user) => {
-                    // Spotify only takes playback commands from Premium
-                    // accounts, here or on any device, so a Free account
-                    // is told once rather than left pressing play.
-                    let free = user
+                    // Free accounts play through the YouTube engine, so
+                    // the "playback needs Premium" notice would be wrong.
+                    // Premium accounts keep the librespot engine.
+                    self.yt_playback = user
                         .product
                         .as_deref()
                         .is_some_and(|product| product != "premium");
-                    if free && !self.premium_notice_shown {
-                        self.premium_notice_shown = true;
-                        self.dialog = Some(Dialog::PremiumNeeded);
-                    }
                     let due = std::mem::take(&mut self.account_caches_due);
                     let changed = self.user_id() != Some(user.id.as_str());
                     if changed {
@@ -7212,6 +7256,14 @@ impl App {
                             &format!("spotify:track:{id}"),
                             Some(PlayableItem::Track(track.clone())),
                         );
+                        // A free account's engine defers queue items whose
+                        // metadata it lacks until this answer arrives.
+                        if self.yt_playback && self.local_ready {
+                            self.backend.player(PlayerCommand::SetTrackMetadata {
+                                uri: track.uri.clone(),
+                                track: local_track_of(&track),
+                            });
+                        }
                         self.track_cache.insert(id.clone(), track);
                         self.track_used.insert(id, Instant::now());
                     }
@@ -7844,6 +7896,54 @@ impl App {
         (!uris.is_empty()).then_some(uris)
     }
 
+    /// What the YouTube engine is told to play: it has no Spotify session,
+    /// so every context is materialized into the list of rows the app
+    /// holds, and each row carries the metadata yt-dlp is searched with.
+    fn yt_load(&self, request: &PlayRequest, shuffle: bool) -> LoadSpec {
+        let mut uris = request.uris.clone();
+        if let Some(context) = &request.context_uri {
+            if matches!(util::uri_kind(context), Some("track" | "episode")) {
+                // A single song is not a context here; it is one row.
+                if uris.is_empty() {
+                    uris.push(context.clone());
+                }
+            } else if let Some(rows) = self.context_track_uris(context) {
+                uris = rows;
+            }
+        }
+        let tracks = uris.iter().map(|uri| self.local_track_for(uri)).collect();
+        LoadSpec {
+            context_uri: None,
+            uris,
+            tracks,
+            offset_uri: request.offset_uri.clone(),
+            offset_index: request.offset_position,
+            position_ms: request.position_ms,
+            play: true,
+            shuffle: shuffle.then_some(true),
+            repeat: None,
+            autoplay: false,
+        }
+    }
+
+    /// The cached metadata for a track URI, or a placeholder the engine
+    /// fills in later through `SetTrackMetadata`.
+    fn local_track_for(&self, uri: &str) -> LocalTrack {
+        if let Some(track) = util::uri_id(uri).and_then(|id| self.track_cache.get(id)) {
+            return local_track_of(track);
+        }
+        LocalTrack {
+            uri: uri.to_string(),
+            ..LocalTrack::default()
+        }
+    }
+
+    /// The metadata for a queue add, when it is cached.
+    fn queued_track(&self, uri: &str) -> Option<LocalTrack> {
+        let track = self.local_track_for(uri);
+        (!track.title.is_empty()).then_some(track)
+    }
+
     fn random_track_in(&self, context_uri: &str) -> Option<String> {
         let uris = self.context_track_uris(context_uri)?;
         Some(uris[rand::random_range(0..uris.len())].clone())
@@ -8029,9 +8129,20 @@ impl App {
             }
             Target::Local => {
                 self.queued_play = None;
-                let mut load = local_load(&request, shuffle);
+                let mut load = if self.yt_playback {
+                    self.yt_load(&request, shuffle)
+                } else {
+                    local_load(&request, shuffle)
+                };
                 load.repeat = Some(self.local.repeat);
-                self.local_list = load.context_uri.is_none().then(|| load.uris.clone());
+                self.local_list = if self.yt_playback {
+                    // The YouTube engine resolves the rows itself; the
+                    // autoplay seed has no Spotify session to ask for a
+                    // station, so no list is remembered.
+                    None
+                } else {
+                    load.context_uri.is_none().then(|| load.uris.clone())
+                };
                 let shuffle_after = shuffle && load.shuffle.is_none() && !load.uris.is_empty();
                 self.backend.player(PlayerCommand::Load(load));
                 if shuffle_after {
@@ -8833,9 +8944,11 @@ impl App {
             .replace("{count}", &count.to_string())
             .replace("{name}", &label),
         );
-        if self.local.is_active() && self.target() == Target::Local {
+        if self.yt_playback || (self.local.is_active() && self.target() == Target::Local) {
             for uri in uris {
-                self.backend.player(PlayerCommand::AddToQueue(uri));
+                let track = self.queued_track(&uri);
+                self.backend
+                    .player(PlayerCommand::AddToQueue { uri, track });
             }
             self.queue_recheck_at = Some(Instant::now() + QUEUE_RECHECK);
         } else {
@@ -8885,7 +8998,9 @@ impl App {
         self.backend.player(PlayerCommand::ClearQueue);
         for uri in self.manual_queue.clone() {
             if uri.starts_with("spotify:track:") || uri.starts_with("spotify:episode:") {
-                self.backend.player(PlayerCommand::AddToQueue(uri));
+                let track = self.queued_track(&uri);
+                self.backend
+                    .player(PlayerCommand::AddToQueue { uri, track });
             }
         }
         // Drop any queue fetch already in flight: it was asked for before
@@ -8912,8 +9027,13 @@ impl App {
         // Queue tracks and episodes directly on the active local engine.
         // Other targets and item types use the Web API.
         let track_like = uri.starts_with("spotify:track:") || uri.starts_with("spotify:episode:");
-        if track_like && self.local.is_active() && matches!(self.target(), Target::Local) {
-            self.backend.player(PlayerCommand::AddToQueue(uri));
+        if track_like
+            && (self.yt_playback
+                || (self.local.is_active() && matches!(self.target(), Target::Local)))
+        {
+            let track = self.queued_track(&uri);
+            self.backend
+                .player(PlayerCommand::AddToQueue { uri, track });
             self.queue_recheck_at = Some(Instant::now() + QUEUE_RECHECK);
             return;
         }
@@ -10443,14 +10563,7 @@ impl App {
                 }
             }
             Action::EnablePlayback => {
-                let free = self
-                    .user
-                    .as_ref()
-                    .and_then(|user| user.product.as_deref())
-                    .is_some_and(|product| product != "premium");
-                if free {
-                    self.toast_error(gettext(self.locale, "Local playback needs Spotify Premium"));
-                } else if !self.local_ready
+                if !self.local_ready
                     && !matches!(
                         self.local_playback,
                         LocalPlayback::Authorizing
@@ -10460,8 +10573,8 @@ impl App {
                 {
                     self.settings.playback_authorized = true;
                     self.settings_dirty = true;
-                    // The backend tries a saved grant first; the browser
-                    // toast follows `LocalPlayback::Authorizing` (#818).
+                    // The backend decides how: a saved grant or the browser
+                    // for Premium, the YouTube engine for a free account.
                     self.backend.send(Command::AuthorizePlayback);
                 }
             }
@@ -11878,6 +11991,7 @@ fn local_load(request: &PlayRequest, shuffle: bool) -> LoadSpec {
     LoadSpec {
         context_uri: request.context_uri.clone(),
         uris: request.uris.clone(),
+        tracks: Vec::new(),
         offset_uri: request.offset_uri.clone(),
         offset_index: request.offset_position,
         position_ms: request.position_ms,
@@ -11885,6 +11999,24 @@ fn local_load(request: &PlayRequest, shuffle: bool) -> LoadSpec {
         shuffle: (shuffle && !(list && chosen)).then_some(true),
         repeat: None,
         autoplay: false,
+    }
+}
+
+/// A cached Web API track as the playback engine's own track metadata.
+fn local_track_of(track: &crate::api::models::Track) -> LocalTrack {
+    LocalTrack {
+        uri: track.uri.clone(),
+        title: track.name.clone(),
+        artists: track.artists.clone(),
+        album: track
+            .album
+            .as_ref()
+            .map(|album| album.name.clone())
+            .unwrap_or_default(),
+        art_url: track.image(640).map(str::to_string),
+        art_small_url: track.image(64).map(str::to_string),
+        duration_ms: track.duration_ms,
+        is_episode: false,
     }
 }
 
@@ -25571,7 +25703,7 @@ mod tests {
     }
 
     #[test]
-    fn a_free_account_is_told_once_that_it_cannot_play() {
+    fn a_free_account_plays_through_the_youtube_engine() {
         let me = |product: &str| {
             ApiResponse::Me(Ok(crate::api::models::User {
                 id: "someone".into(),
@@ -25581,14 +25713,58 @@ mod tests {
         };
         let mut app = headless_app();
         app.handle_api(me("free"));
-        assert!(matches!(app.dialog, Some(Dialog::PremiumNeeded)));
-        app.dialog = None;
+        assert!(app.yt_playback, "free accounts route to the YouTube engine");
+        assert!(
+            app.dialog.is_none(),
+            "playing through YouTube must not say playback needs Premium"
+        );
         app.handle_api(me("free"));
-        assert!(app.dialog.is_none(), "the notice is shown once");
+        assert!(app.yt_playback);
 
         let mut app = headless_app();
         app.handle_api(me("premium"));
+        assert!(!app.yt_playback, "Premium keeps the librespot engine");
         assert!(app.dialog.is_none());
+    }
+
+    /// The YouTube engine has no Spotify session, so a context load is
+    /// materialized into rows, and each row carries its cached metadata.
+    #[test]
+    fn a_youtube_load_carries_the_rows_and_their_metadata() {
+        use crate::api::models::Track as ApiTrack;
+
+        let mut app = headless_app();
+        app.yt_playback = true;
+        app.track_cache.insert(
+            "a".into(),
+            ApiTrack {
+                id: Some("a".into()),
+                uri: "spotify:track:a".into(),
+                name: "Song".into(),
+                duration_ms: 1000,
+                ..Default::default()
+            },
+        );
+        let request = PlayRequest::tracks(vec!["spotify:track:a".into(), "spotify:track:b".into()]);
+        let spec = app.yt_load(&request, false);
+        assert_eq!(
+            spec.context_uri, None,
+            "the engine plays rows, not contexts"
+        );
+        assert_eq!(spec.uris, ["spotify:track:a", "spotify:track:b"]);
+        assert_eq!(spec.tracks.len(), 2);
+        assert_eq!(spec.tracks[0].title, "Song");
+        assert!(
+            spec.tracks[1].title.is_empty(),
+            "an uncached row arrives as a placeholder for the engine to defer"
+        );
+
+        // A single song arrives as one row, not as a context of itself.
+        let single = app.yt_load(&PlayRequest::context("spotify:track:a"), false);
+        assert_eq!(single.context_uri, None);
+        assert_eq!(single.uris, ["spotify:track:a"]);
+        assert_eq!(single.tracks.len(), 1);
+        assert_eq!(single.tracks[0].title, "Song");
     }
 
     /// One song plays as a context of its own, so librespot's autoplay

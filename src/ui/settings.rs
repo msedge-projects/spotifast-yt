@@ -477,7 +477,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let (status, detail, action) = match &app.local_playback {
         crate::backend::LocalPlayback::Ready { .. } => (
             pgettext(locale, "playback status", "Ready"),
-            gettext(locale, "This computer is a Spotify Connect device."),
+            if app.yt_playback {
+                gettext(
+                    locale,
+                    "This computer plays through YouTube (yt-dlp and mpv).",
+                )
+            } else {
+                gettext(locale, "This computer is a Spotify Connect device.")
+            },
             None,
         ),
         crate::backend::LocalPlayback::Authorizing => (
@@ -505,10 +512,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ),
         crate::backend::LocalPlayback::Unavailable => (
             pgettext(locale, "playback status", "Not set up"),
-            gettext(
-                locale,
-                "Requires Spotify Premium and a one-time browser sign-in.",
-            ),
+            if app.yt_playback {
+                gettext(
+                    locale,
+                    "Free accounts play through YouTube: install yt-dlp and mpv, then enable playback here.",
+                )
+            } else {
+                gettext(
+                    locale,
+                    "Requires Spotify Premium and a one-time browser sign-in.",
+                )
+            },
             Some(gettext(locale, "Enable playback here")),
         ),
     };
