@@ -7,13 +7,17 @@
 //! beside the librespot engine: Premium accounts keep `player.rs`, free
 //! accounts get this one.
 //!
+//! Resolved URLs are kept briefly, and the next song is resolved while the
+//! current one plays, so starting a song normally does not wait on yt-dlp
+//! and the resolver's CPU burst stays away from the moment songs change.
+//!
 //! The engine owns the queue itself. librespot's Spirc advances tracks for
 //! the Premium engine; here mpv reports the end of a track, and the engine
 //! picks what plays next (the user's queued songs first, then the context,
 //! honouring repeat and shuffle) and pushes the new track through the same
 //! [`LocalState`] snapshots the interface already consumes.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,6 +45,11 @@ const POSITION_NOTIFY_MS: u32 = 500;
 /// A Previous press within this of the start restarts the track instead of
 /// moving to the one before it, like librespot.
 const PREVIOUS_RESTART_MS: u32 = 3_000;
+/// How long a resolved direct URL may be reused for its track.
+const URL_TTL: Duration = Duration::from_secs(30 * 60);
+/// How long into a song the next one is resolved in the background. The wait
+/// keeps the resolver's CPU burst clear of the transition between songs.
+const PREFETCH_DELAY: Duration = Duration::from_secs(10);
 
 /// The engine's actor messages: commands from the interface, mpv's events,
 /// finished resolves, and the end of the pipe.
@@ -49,6 +58,11 @@ enum Message {
     Mpv(Value),
     Resolved {
         id: u64,
+        result: Result<String, String>,
+    },
+    /// A background resolve for the next song finished.
+    Prefetched {
+        uri: String,
         result: Result<String, String>,
     },
     Closed,
@@ -142,6 +156,9 @@ impl YtEngine {
             awaiting: false,
             target_ms: 0,
             told_ms: 0,
+            url_cache: HashMap::new(),
+            prefetching: None,
+            retried_uri: None,
         };
         tokio::spawn(run_actor(actor, receiver));
         tokio::spawn(run_writer(writer, mpv_receiver));
@@ -300,6 +317,15 @@ struct Actor {
     target_ms: u32,
     /// The last position the interface was told, to throttle snapshots.
     told_ms: u32,
+    /// Direct URLs resolved recently, by track URI: a song starting from
+    /// here skips yt-dlp, and its CPU cost, entirely.
+    url_cache: HashMap<String, (String, Instant)>,
+    /// The track a background resolve is running for, so that only one runs
+    /// at a time.
+    prefetching: Option<String>,
+    /// The song whose load failed once and was resolved again, so a repeated
+    /// failure is not retried forever.
+    retried_uri: Option<String>,
 }
 
 async fn run_actor(mut actor: Actor, mut messages: mpsc::UnboundedReceiver<Message>) {
@@ -309,6 +335,7 @@ async fn run_actor(mut actor: Actor, mut messages: mpsc::UnboundedReceiver<Messa
             Message::Command(command) => actor.apply(command),
             Message::Mpv(value) => actor.mpv_event(&value),
             Message::Resolved { id, result } => actor.resolved(id, result),
+            Message::Prefetched { uri, result } => actor.prefetched(uri, result),
             Message::Closed => {
                 actor.closed();
                 return;
@@ -460,6 +487,9 @@ impl Actor {
         let Some(entry) = self.current.clone() else {
             return;
         };
+        // Choosing a song is fresh business: a prefetch still in flight was
+        // for an earlier pick, so let the next one schedule.
+        self.prefetching = None;
         self.play_id = self.play_id.wrapping_add(1);
         let id = self.play_id;
         self.loaded = false;
@@ -500,6 +530,16 @@ impl Actor {
             self.send(json!(["stop"]));
             return;
         }
+        if let Some(url) = self.cached_url(&entry.uri) {
+            // Resolved already, by the prefetch made while the last song
+            // played, or by an earlier play: start without yt-dlp.
+            self.awaiting = false;
+            self.send(json!(["loadfile", url, "replace"]));
+            if position_ms > 0 {
+                self.seek_command(position_ms);
+            }
+            return;
+        }
         self.awaiting = true;
         let query = format!("{} {}", entry.track.title, entry.track.artist_names());
         let yt_dlp = self.yt_dlp.clone();
@@ -519,6 +559,10 @@ impl Actor {
         }
         match result {
             Ok(url) => {
+                let uri = self.current.as_ref().map(|entry| entry.uri.clone());
+                if let Some(uri) = uri {
+                    self.store_url(uri, url.clone());
+                }
                 self.send(json!(["loadfile", url, "replace"]));
                 if self.target_ms > 0 {
                     self.seek_command(self.target_ms);
@@ -529,6 +573,71 @@ impl Actor {
                 self.fail(&message);
             }
         }
+    }
+
+    /// A direct URL for `uri`, if it was resolved recently enough to reuse.
+    fn cached_url(&self, uri: &str) -> Option<String> {
+        self.url_cache
+            .get(uri)
+            .filter(|(_, at)| at.elapsed() < URL_TTL)
+            .map(|(url, _)| url.clone())
+    }
+
+    fn store_url(&mut self, uri: String, url: String) {
+        self.url_cache.retain(|_, (_, at)| at.elapsed() < URL_TTL);
+        self.url_cache.insert(uri, (url, Instant::now()));
+    }
+
+    /// A background resolve finished: the URL waits in the cache for the
+    /// song's turn.
+    fn prefetched(&mut self, uri: String, result: Result<String, String>) {
+        if self.prefetching.as_deref() == Some(uri.as_str()) {
+            self.prefetching = None;
+        }
+        if let Ok(url) = result {
+            self.store_url(uri, url);
+        }
+    }
+
+    /// The entry that follows the current one: the user's queue first, then
+    /// the context, as `advance` picks it. `None` when the pick is a random
+    /// one (shuffle) or the list is over: nothing to prefetch.
+    fn next_entry(&self) -> Option<Entry> {
+        if let Some(entry) = self.manual.front() {
+            return Some(entry.clone());
+        }
+        if self.shuffle || self.repeat == RepeatMode::Track {
+            return None;
+        }
+        let index = next_list_index(self.list.len(), self.cursor, false, self.repeat, |_| 0)?;
+        self.list.get(index).cloned()
+    }
+
+    /// Resolves the next song while the current one plays, so starting it is
+    /// instant and free of the resolver's CPU burst: that burst lands
+    /// mid-song instead of at the transition.
+    fn prefetch_next(&mut self) {
+        if self.prefetching.is_some() {
+            return;
+        }
+        let Some(entry) = self.next_entry() else {
+            return;
+        };
+        if !entry.resolvable() || self.cached_url(&entry.uri).is_some() {
+            return;
+        }
+        let uri = entry.uri.clone();
+        let query = format!("{} {}", entry.track.title, entry.track.artist_names());
+        let yt_dlp = self.yt_dlp.clone();
+        let messages = self.messages.clone();
+        self.prefetching = Some(uri.clone());
+        tokio::spawn(async move {
+            tokio::time::sleep(PREFETCH_DELAY).await;
+            let result = resolve(&yt_dlp, query.trim())
+                .await
+                .map_err(|error| format!("{error:#}"));
+            let _ = messages.send(Message::Prefetched { uri, result });
+        });
     }
 
     fn mpv_event(&mut self, value: &Value) {
@@ -571,6 +680,8 @@ impl Actor {
         }
         drop(state);
         self.publish();
+        self.retried_uri = None;
+        self.prefetch_next();
     }
 
     fn end_file(&mut self, value: &Value) {
@@ -589,6 +700,17 @@ impl Actor {
             }
             Some("error") => {
                 self.loaded = false;
+                // A stream can be refused: an expired cached URL, a
+                // transient 403. Resolve the song afresh and try once more
+                // before reporting the failure.
+                if let Some(entry) = self.current.clone()
+                    && self.retried_uri.as_deref() != Some(entry.uri.as_str())
+                {
+                    self.retried_uri = Some(entry.uri.clone());
+                    self.url_cache.remove(&entry.uri);
+                    self.start(self.target_ms);
+                    return;
+                }
                 let detail = value
                     .get("file_error")
                     .and_then(Value::as_str)
@@ -1013,6 +1135,44 @@ async fn connect_ipc(pipe: &Path) -> Result<BoxedIpc> {
     }
 }
 
+/// The command that runs yt-dlp, prepared to leave no trace on screen.
+///
+/// On Windows a pip-installed `yt-dlp.exe` is a console program, so a
+/// console flashes over the interface every time it runs: once for the
+/// shim and again for the Python it starts. When the windowless interpreter
+/// of the same installation sits beside it, the module runs through that
+/// instead and no console exists at all; otherwise the shim runs with
+/// `CREATE_NO_WINDOW`. Either way the resolver is also started at
+/// below-normal priority, so its work never fights the audio thread or the
+/// interface.
+fn yt_dlp_command(yt_dlp: &Path) -> tokio::process::Command {
+    #[cfg(windows)]
+    {
+        if let Some(root) = yt_dlp.parent().and_then(Path::parent) {
+            let pythonw = root.join("pythonw.exe");
+            if pythonw.is_file() {
+                let mut command = tokio::process::Command::new(pythonw);
+                command.arg("-m").arg("yt_dlp");
+                hide_console(&mut command);
+                return command;
+            }
+        }
+    }
+    let mut command = tokio::process::Command::new(yt_dlp);
+    hide_console(&mut command);
+    command
+}
+
+#[cfg(windows)]
+fn hide_console(command: &mut tokio::process::Command) {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+    command.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
+}
+
+#[cfg(not(windows))]
+fn hide_console(_command: &mut tokio::process::Command) {}
+
 /// One flag-only resolve: the first stdout line of `yt-dlp -g` is the
 /// direct audio URL. Nothing is downloaded.
 ///
@@ -1022,7 +1182,7 @@ async fn connect_ipc(pipe: &Path) -> Result<BoxedIpc> {
 /// platform ads without any ad-specific code. Sponsor reads inside the
 /// content do remain; skipping those needs SponsorBlock (not included).
 async fn resolve(yt_dlp: &Path, query: &str) -> Result<String> {
-    let mut command = tokio::process::Command::new(yt_dlp);
+    let mut command = yt_dlp_command(yt_dlp);
     command
         .arg("--ignore-config")
         .arg("--no-warnings")
