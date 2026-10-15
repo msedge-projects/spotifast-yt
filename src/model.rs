@@ -580,6 +580,9 @@ pub struct Library {
     pub playlists_edits: Vec<PlaylistEdit>,
     /// When a load that Spotify turned away is asked for again.
     pub playlists_retry_at: Option<Instant>,
+    /// Consecutive loads Spotify turned away; the retry gap grows with
+    /// each one, so a throttle is not fed a request every minute.
+    pub playlists_retry_failures: u32,
     /// The list shown is whole: every page of one load, or a restored
     /// cache. Only a whole list is saved for the next start.
     pub playlists_whole: bool,

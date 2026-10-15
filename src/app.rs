@@ -37,6 +37,11 @@ const REMOTE_POLL_IDLE: Duration = Duration::from_secs(20);
 /// The shortest regular gap between playback polls, which spend the Web API
 /// quota.
 const REMOTE_POLL_MIN: Duration = Duration::from_secs(15);
+/// After a rate-limited playback poll, polls stand down for this long: the
+/// retry ladder's 429s extend the shared cooldown that every user-facing
+/// request then waits behind, and one client should not hold its own
+/// account down.
+const REMOTE_POLL_SILENCE: Duration = Duration::from_secs(45);
 /// How long after a command to another device, or a switch to one, polls are
 /// not held to `REMOTE_POLL_MIN`, so the result is confirmed before the
 /// optimistic holds run out.
@@ -366,6 +371,10 @@ pub struct App {
     pub local: LocalState,
     pub remote: Option<RemoteSnapshot>,
     remote_polled_at: Instant,
+    /// While set and in the future, playback polls are skipped: a
+    /// rate-limited poll silences the next ones instead of chaining
+    /// straight into another retry ladder.
+    remote_poll_silenced_until: Option<Instant>,
     remote_poll_pending: bool,
     /// When a poll last went out early for the end of a song on another
     /// device.
@@ -929,6 +938,7 @@ impl App {
             local: LocalState::default(),
             remote: None,
             remote_polled_at: Instant::now() - REMOTE_POLL_UNSEEN,
+            remote_poll_silenced_until: None,
             remote_poll_pending: false,
             remote_end_polled_at: None,
             remote_command_at: None,
@@ -6071,7 +6081,19 @@ impl App {
                             self.on_now_playing_changed();
                         }
                     }
-                    Err(error) => log::debug!("playback state unavailable: {error}"),
+                    Err(error) => {
+                        log::debug!("playback state unavailable: {error}");
+                        // A throttled poll stamped itself due again at
+                        // dispatch, so its retry ladder chained straight
+                        // into another; each ladder's 429s extend the
+                        // shared cooldown every user request then waits
+                        // on. Stamp the answer and stand down for a while.
+                        self.remote_polled_at = Instant::now();
+                        if matches!(error, crate::api::ApiError::RateLimited) {
+                            self.remote_poll_silenced_until =
+                                Some(Instant::now() + REMOTE_POLL_SILENCE);
+                        }
+                    }
                 }
             }
             ApiResponse::Queue { seq, result } => {
@@ -6085,6 +6107,10 @@ impl App {
                     .pending_queue_batches
                     .values()
                     .any(|target| *target == self.target());
+                let throttled = matches!(
+                    &result,
+                    Err(crate::api::ApiError::RateLimited | crate::api::ApiError::QuotaExhausted)
+                );
                 if writing_queue
                     || result
                         .as_ref()
@@ -6092,8 +6118,13 @@ impl App {
                 {
                     // Keep the optimistic queue and retry after a stale
                     // response. Accept Spotify's state after the retry limit.
+                    // A rate-limited answer arms no quick recheck: during a
+                    // throttle that became a request every 700 ms, each one
+                    // extending the cooldown the user is waiting behind.
                     self.queue_stale_retries = self.queue_stale_retries.saturating_add(1);
-                    self.queue_recheck_at = Some(Instant::now() + QUEUE_RECHECK);
+                    if !throttled {
+                        self.queue_recheck_at = Some(Instant::now() + QUEUE_RECHECK);
+                    }
                     return;
                 }
                 self.queue_stale_retries = 0;
@@ -6314,6 +6345,7 @@ impl App {
                         self.fill_blank_playlists();
                         self.note_listed_playlists();
                     }
+                    self.library.playlists_retry_failures = 0;
                     if next_offset.is_none() {
                         self.store_library_cache();
                     }
@@ -6328,7 +6360,15 @@ impl App {
                         crate::api::ApiError::RateLimited | crate::api::ApiError::Network(_)
                     ) || error.status().is_some_and(|status| status >= 500)
                     {
-                        library.playlists_retry_at = Some(Instant::now() + PLAYLISTS_RETRY);
+                        let grown = match library.playlists_retry_failures {
+                            0 => PLAYLISTS_RETRY,
+                            1 => PLAYLISTS_RETRY * 2,
+                            2 => PLAYLISTS_RETRY * 5,
+                            _ => PLAYLISTS_RETRY * 10,
+                        };
+                        library.playlists_retry_failures =
+                            library.playlists_retry_failures.saturating_add(1);
+                        library.playlists_retry_at = Some(Instant::now() + grown);
                     }
                     if refreshing {
                         // The list shown stays; it is read again later.
@@ -11677,6 +11717,12 @@ impl App {
     }
 
     fn poll_remote_if_due(&mut self) {
+        if let Some(until) = self.remote_poll_silenced_until {
+            if Instant::now() < until {
+                return;
+            }
+            self.remote_poll_silenced_until = None;
+        }
         let (interval, song_end) = self.remote_poll_interval();
         let elapsed = self.remote_polled_at.elapsed();
         if self.remote_poll_pending || elapsed < interval {
