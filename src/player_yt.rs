@@ -563,13 +563,14 @@ impl Actor {
         }
         self.awaiting = true;
         let query = format!("{} {}", entry.track.title, entry.track.artist_names());
+        let uri = entry.uri.clone();
         log::info!("YouTube: resolving {}", entry.track.title);
         let yt_dlp = self.yt_dlp.clone();
         let resolver = self.resolver.clone();
         let messages = self.messages.clone();
         tokio::spawn(async move {
             let started = Instant::now();
-            let result = resolve(&resolver, &yt_dlp, query.trim())
+            let result = resolve(&resolver, &yt_dlp, &uri, query.trim())
                 .await
                 .map_err(|error| format!("{error:#}"));
             match &result {
@@ -690,7 +691,7 @@ impl Actor {
         tokio::spawn(async move {
             tokio::time::sleep(PREFETCH_DELAY).await;
             let started = Instant::now();
-            let result = resolve(&resolver, &yt_dlp, query.trim())
+            let result = resolve(&resolver, &yt_dlp, &uri, query.trim())
                 .await
                 .map_err(|error| format!("{error:#}"));
             match &result {
@@ -1249,18 +1250,33 @@ fn hide_console(command: &mut tokio::process::Command) {
 fn hide_console(_command: &mut tokio::process::Command) {}
 
 /// One resolve: the native InnerTube client first, `yt-dlp` when it is
-/// refused. The native path is the quiet default; the fallback is loud in
-/// the log so a client rotation is noticed.
+/// refused. A `yt:<video id>` URI (a locally stored track) names its video
+/// directly, so the search round trip is skipped for it. The native path
+/// is the quiet default; the fallback is loud in the log so a client
+/// rotation is noticed.
 async fn resolve(
     native: &yt_resolver::NativeResolver,
     yt_dlp: &Path,
+    uri: &str,
     query: &str,
 ) -> Result<yt_resolver::Resolved> {
-    match native.resolve(query).await {
+    let video = uri.strip_prefix("yt:");
+    let native_result = match video {
+        Some(video) => native.resolve_video(video).await,
+        None => native.resolve(query).await,
+    };
+    match native_result {
         Ok(stream) => Ok(stream),
         Err(error) => {
             log::warn!("YouTube: the native client failed ({error:#}); using yt-dlp");
-            resolve_yt_dlp(yt_dlp, query).await
+            match video {
+                // yt-dlp takes a watch URL as the target directly.
+                Some(video) => {
+                    resolve_yt_dlp(yt_dlp, &format!("https://www.youtube.com/watch?v={video}"))
+                        .await
+                }
+                None => resolve_yt_dlp(yt_dlp, query).await,
+            }
         }
     }
 }

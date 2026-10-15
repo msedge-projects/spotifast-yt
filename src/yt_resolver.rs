@@ -19,12 +19,26 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// A direct audio URL and how long it is known to live.
 pub(crate) struct Resolved {
     pub url: String,
     pub ttl: Duration,
+}
+
+/// One YouTube Music search result: what a row needs to draw and play.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct YtTrack {
+    pub video_id: String,
+    pub title: String,
+    pub artists: String,
+    pub album: String,
+    pub duration_ms: u64,
+    pub art_url: Option<String>,
+    /// An official "art track": the song's own audio, not a user video.
+    pub official_audio: bool,
 }
 
 /// The life given to URLs whose own lifetime is not known (the yt-dlp path
@@ -56,6 +70,13 @@ const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWe
 
 const SEARCH_URL: &str = "https://www.youtube.com/youtubei/v1/search?prettyPrint=false";
 const PLAYER_URL: &str = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
+
+/// YouTube Music's own search: results carry artists, album, duration,
+/// and thumbnails, which the plain video search does not.
+const MUSIC_SEARCH_URL: &str = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false";
+const MUSIC_CLIENT_NAME: &str = "WEB_REMIX";
+const MUSIC_CLIENT_VERSION: &str = "1.20260707.12.00";
+const MUSIC_CLIENT_ID: &str = "67";
 
 /// How long one InnerTube request may take.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
@@ -106,19 +127,76 @@ impl NativeResolver {
         }
     }
 
+    /// One resolve for a video named directly, by id (a locally stored
+    /// track), with the same failure handling as a search resolve.
+    pub(crate) async fn resolve_video(&self, video_id: &str) -> Result<Resolved> {
+        if self.failures.load(Ordering::Relaxed) >= FAILURES_BEFORE_FALLBACK {
+            return Err(anyhow!("the native client is disabled for this session"));
+        }
+        match self.player(video_id).await {
+            Ok(stream) => {
+                self.failures.store(0, Ordering::Relaxed);
+                Ok(stream)
+            }
+            Err(error) => {
+                self.failures.fetch_add(1, Ordering::Relaxed);
+                Err(error)
+            }
+        }
+    }
+
+    /// YouTube Music search for the app's own search page: music-typed
+    /// results with artists, album, duration, and thumbnail.
+    // The search page is the next milestone; until its first caller lands,
+    // only the parser tests above exercise this.
+    #[allow(dead_code)]
+    pub async fn search_music(&self, query: &str) -> Result<Vec<YtTrack>> {
+        let response = self
+            .post(
+                MUSIC_SEARCH_URL,
+                MUSIC_CLIENT_ID,
+                MUSIC_CLIENT_VERSION,
+                Some("https://music.youtube.com"),
+                &json!({
+                    "context": { "client": {
+                        "clientName": MUSIC_CLIENT_NAME,
+                        "clientVersion": MUSIC_CLIENT_VERSION,
+                        "hl": "en",
+                        "gl": "US",
+                    } },
+                    "query": query,
+                }),
+            )
+            .await
+            .context("the music search was refused")?;
+        self.remember_visitor(&response);
+        Ok(music_items(&response))
+    }
+
     async fn try_resolve(&self, query: &str) -> Result<Resolved> {
         let search = self
             .post(
                 SEARCH_URL,
+                CLIENT_ID,
+                CLIENT_VERSION,
+                None,
                 &json!({ "context": { "client": self.client() }, "query": query }),
             )
             .await
             .context("the search was refused")?;
         self.remember_visitor(&search);
         let video = first_video_id(&search).ok_or_else(|| anyhow!("the search found no video"))?;
+        self.player(&video).await
+    }
+
+    /// One video's audio URL: the player request and the format pick.
+    async fn player(&self, video: &str) -> Result<Resolved> {
         let player = self
             .post(
                 PLAYER_URL,
+                CLIENT_ID,
+                CLIENT_VERSION,
+                None,
                 &json!({
                     "context": { "client": self.client() },
                     "videoId": video,
@@ -189,14 +267,26 @@ impl NativeResolver {
         }
     }
 
-    async fn post(&self, url: &str, body: &Value) -> Result<Value> {
+    async fn post(
+        &self,
+        url: &str,
+        client_id: &str,
+        client_version: &str,
+        origin: Option<&str>,
+        body: &Value,
+    ) -> Result<Value> {
         let mut request = self
             .http
             .post(url)
             .header("User-Agent", USER_AGENT)
-            .header("X-YouTube-Client-Name", CLIENT_ID)
-            .header("X-YouTube-Client-Version", CLIENT_VERSION)
+            .header("X-YouTube-Client-Name", client_id)
+            .header("X-YouTube-Client-Version", client_version)
             .json(body);
+        if let Some(origin) = origin {
+            request = request
+                .header("Origin", origin)
+                .header("Referer", format!("{origin}/"));
+        }
         if let Some(visitor) = self.visitor() {
             request = request.header("X-Goog-Visitor-Id", visitor);
         }
@@ -231,6 +321,160 @@ fn first_video_id(response: &Value) -> Option<String> {
         Value::Array(items) => items.iter().find_map(first_video_id),
         _ => None,
     }
+}
+
+/// Every music result of a YouTube Music search response, in the order the
+/// response lists them.
+fn music_items(response: &Value) -> Vec<YtTrack> {
+    let mut items = Vec::new();
+    collect_music_items(response, &mut items);
+    items
+}
+
+fn collect_music_items(value: &Value, items: &mut Vec<YtTrack>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(item) = map
+                .get("musicResponsiveListItemRenderer")
+                .and_then(music_item)
+            {
+                items.push(item);
+            }
+            for child in map.values() {
+                collect_music_items(child, items);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_music_items(child, items);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// One search result's fields, from the renderer YouTube Music answers
+/// with: the title and the video id in the first flex column, the artists,
+/// album, and duration in the second, and the thumbnail beside them.
+fn music_item(renderer: &Value) -> Option<YtTrack> {
+    let columns = renderer.get("flexColumns")?.as_array()?;
+    let title_runs = music_column_texts(columns, 0);
+    let title = *title_runs.first()?;
+    let video_id = music_video_id(columns)?;
+    let subtitle = music_column_texts(columns, 1);
+    let artists = subtitle.first().copied().unwrap_or_default();
+    let duration_ms = subtitle
+        .iter()
+        .rev()
+        .find_map(|text| music_duration_ms(text))
+        .unwrap_or(0);
+    let album = if subtitle.len() >= 3 { subtitle[1] } else { "" };
+    let official_audio = renderer
+        .get("flexColumns")
+        .and_then(Value::as_array)
+        .and_then(|columns| columns.first())
+        .and_then(|column| column.get("musicResponsiveListItemFlexColumnRenderer"))
+        .and_then(|column| column.get("text"))
+        .and_then(|text| text.get("runs"))
+        .and_then(Value::as_array)
+        .and_then(|runs| runs.first())
+        .and_then(|run| run.get("navigationEndpoint"))
+        .and_then(|endpoint| endpoint.get("watchEndpoint"))
+        .and_then(|player| player.get("watchEndpointMusicSupportedConfigs"))
+        .and_then(|configs| configs.get("watchEndpointMusicConfig"))
+        .and_then(|config| config.get("musicVideoType"))
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "MUSIC_VIDEO_TYPE_ATV");
+    let art_url = renderer
+        .get("thumbnail")
+        .and_then(|thumbnail| thumbnail.get("musicThumbnailRenderer"))
+        .and_then(|thumbnail| thumbnail.get("thumbnail"))
+        .and_then(|thumbnail| thumbnail.get("thumbnails"))
+        .and_then(Value::as_array)
+        .and_then(|thumbnails| thumbnails.last())
+        .and_then(|thumbnail| thumbnail.get("url"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Some(YtTrack {
+        video_id: video_id.to_string(),
+        title: title.to_string(),
+        artists: artists.to_string(),
+        album: album.to_string(),
+        duration_ms,
+        art_url,
+        official_audio,
+    })
+}
+
+/// The texts of one flex column of a music row, with the " • " separators
+/// and empty runs dropped.
+fn music_column_texts(columns: &[Value], index: usize) -> Vec<&str> {
+    columns
+        .get(index)
+        .and_then(|column| column.get("musicResponsiveListItemFlexColumnRenderer"))
+        .and_then(|column| column.get("text"))
+        .and_then(|text| text.get("runs"))
+        .and_then(Value::as_array)
+        .map(|runs| {
+            runs.iter()
+                .filter_map(|run| run.get("text").and_then(Value::as_str))
+                .filter(|text| {
+                    text.chars()
+                        .any(|character| !character.is_whitespace() && character != '•')
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The video the first flex column names: the title's own link.
+fn music_video_id(columns: &[Value]) -> Option<&str> {
+    columns
+        .first()?
+        .get("musicResponsiveListItemFlexColumnRenderer")?
+        .get("text")?
+        .get("runs")?
+        .as_array()?
+        .first()?
+        .get("navigationEndpoint")?
+        .get("watchEndpoint")?
+        .get("videoId")?
+        .as_str()
+}
+
+/// A "3:53" or "1:02:03" text as milliseconds. A row may pack its whole
+/// subtitle into one run ("Artist • Album • 3:53"), so only the text's
+/// last token is read; anything else, like a view count, is none.
+fn music_duration_ms(text: &str) -> Option<u64> {
+    let last_token = text
+        .rsplit([' ', '\u{a0}', '•'])
+        .find(|token| !token.is_empty())?;
+    let parts: Vec<&str> = last_token.split(':').collect();
+    let seconds = match parts.as_slice() {
+        [minutes, seconds] => {
+            let minutes: u64 = minutes.trim().parse().ok()?;
+            let seconds: u64 = seconds.trim().parse().ok()?;
+            if seconds >= 60 {
+                return None;
+            }
+            minutes.saturating_mul(60).saturating_add(seconds)
+        }
+        [hours, minutes, seconds] => {
+            let hours: u64 = hours.trim().parse().ok()?;
+            let minutes: u64 = minutes.trim().parse().ok()?;
+            let seconds: u64 = seconds.trim().parse().ok()?;
+            if minutes >= 60 || seconds >= 60 {
+                return None;
+            }
+            hours
+                .saturating_mul(60)
+                .saturating_add(minutes)
+                .saturating_mul(60)
+                .saturating_add(seconds)
+        }
+        _ => return None,
+    };
+    (seconds > 0).then_some(seconds.saturating_mul(1000))
 }
 
 /// The best audio-only stream in a player response: m4a first, then the
@@ -380,5 +624,84 @@ mod tests {
             Duration::ZERO,
             "inside the margin is already stale"
         );
+    }
+
+    #[test]
+    fn a_music_search_answers_its_tracks_in_order() {
+        let response = json!({
+            "contents": { "musicShelfRenderer": { "contents": [
+                { "musicResponsiveListItemRenderer": {
+                    "flexColumns": [
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "Alright",
+                              "navigationEndpoint": { "watchEndpoint": {
+                                  "videoId": "67vr-3kpX3Q",
+                                  "watchEndpointMusicSupportedConfigs": {
+                                      "watchEndpointMusicConfig": { "musicVideoType": "MUSIC_VIDEO_TYPE_ATV" }
+                                  }
+                              } } }
+                        ] } } },
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "Kendrick Lamar" },
+                            { "text": " • " },
+                            { "text": "To Pimp A Butterfly" },
+                            { "text": " • " },
+                            { "text": "3:53" }
+                        ] } } }
+                    ],
+                    "thumbnail": { "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [
+                        { "url": "https://lh3.googleusercontent.com/small" },
+                        { "url": "https://lh3.googleusercontent.com/large" }
+                    ] } } }
+                } },
+                { "musicResponsiveListItemRenderer": {
+                    "flexColumns": [
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "alright (slowed + reverb)",
+                              "navigationEndpoint": { "watchEndpoint": { "videoId": "nVev0Z1bQBU" } } }
+                        ] } } },
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "some channel" },
+                            { "text": " • " },
+                            { "text": "1.2M views" }
+                        ] } } }
+                    ]
+                } }
+            ] } } }
+        );
+        let items = music_items(&response);
+        assert_eq!(items.len(), 2, "one track per result");
+        assert_eq!(items[0].video_id, "67vr-3kpX3Q");
+        assert_eq!(items[0].title, "Alright");
+        assert_eq!(items[0].artists, "Kendrick Lamar");
+        assert_eq!(items[0].album, "To Pimp A Butterfly");
+        assert_eq!(items[0].duration_ms, 233_000);
+        assert_eq!(
+            items[0].art_url.as_deref(),
+            Some("https://lh3.googleusercontent.com/large")
+        );
+        assert!(
+            items[0].official_audio,
+            "an art track is the song's own audio"
+        );
+        assert_eq!(items[1].video_id, "nVev0Z1bQBU");
+        assert_eq!(items[1].artists, "some channel");
+        assert_eq!(items[1].album, "", "a view count is not an album");
+        assert_eq!(items[1].duration_ms, 0, "a view count is not a duration");
+        assert!(!items[1].official_audio);
+    }
+
+    #[test]
+    fn a_duration_is_read_from_its_last_token() {
+        assert_eq!(music_duration_ms("3:53"), Some(233_000));
+        assert_eq!(music_duration_ms("1:02:03"), Some(3_723_000));
+        assert_eq!(
+            music_duration_ms("Artist • Album • 3:53"),
+            Some(233_000),
+            "a row that packs its subtitle into one run still answers"
+        );
+        assert_eq!(music_duration_ms("1.2M views"), None);
+        assert_eq!(music_duration_ms("some channel"), None);
+        assert_eq!(music_duration_ms(""), None);
     }
 }
