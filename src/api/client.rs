@@ -325,6 +325,17 @@ impl NetActivity {
                 .saturating_sub(self.busy_since_ms.load(Ordering::SeqCst))
                 >= for_at_least.as_millis() as u64
     }
+
+    /// How long requests have been in flight continuously, when any are.
+    pub fn busy_for(&self) -> Option<Duration> {
+        if self.in_flight.load(Ordering::SeqCst) == 0 {
+            return None;
+        }
+        Some(Duration::from_millis(
+            self.now_ms()
+                .saturating_sub(self.busy_since_ms.load(Ordering::SeqCst)),
+        ))
+    }
 }
 
 tokio::task_local! {

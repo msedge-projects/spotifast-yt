@@ -61,6 +61,10 @@ const PLAYLISTS_RETRY: Duration = Duration::from_secs(60);
 /// How long background work goes on before the top bar's spinner shows it,
 /// so fast answers never flash it.
 const BACKGROUND_QUIET: Duration = Duration::from_secs(1);
+/// The longest a Spotify wait keeps the top bar's spinner animating: a
+/// throttled client can hold requests down for whole minutes, and a spinner
+/// that never stops keeps spending frames without saying anything new.
+const SPINNER_LONGEST: Duration = Duration::from_secs(120);
 /// How often coming back to the window reads the playlist tree again.
 const ROOTLIST_REFRESH: Duration = Duration::from_secs(5);
 /// How far into a song Previous restarts it rather than stepping back,
@@ -4378,7 +4382,12 @@ impl App {
             Some(BackgroundActivity::Library)
         } else if long(updates) {
             Some(BackgroundActivity::Updates)
-        } else if self.backend.activity().busy(BACKGROUND_QUIET) {
+        } else if self
+            .backend
+            .activity()
+            .busy_for()
+            .is_some_and(|busy_for| busy_for >= BACKGROUND_QUIET && busy_for < SPINNER_LONGEST)
+        {
             Some(BackgroundActivity::Spotify)
         } else {
             None
@@ -7987,10 +7996,53 @@ impl App {
         if let Some(track) = util::uri_id(uri).and_then(|id| self.track_cache.get(id)) {
             return local_track_of(track);
         }
+        if let Some(track) = self.cached_track_anywhere(uri) {
+            return local_track_of(&track);
+        }
         LocalTrack {
             uri: uri.to_string(),
             ..LocalTrack::default()
         }
+    }
+
+    /// A track's metadata from any list the app already holds: loaded album,
+    /// playlist, and Liked Songs rows, and the play history. A play for a
+    /// track the interface has shown should not wait on the Web API (which
+    /// can be throttled for a minute at a time) to learn a title it is
+    /// already drawing; a row found nowhere still parks for the engine.
+    fn cached_track_anywhere(&self, uri: &str) -> Option<Track> {
+        for page in self.album_pages.values() {
+            if let Some(track) = page.tracks.items.iter().find(|track| track.uri == uri) {
+                return Some(track.clone());
+            }
+        }
+        for page in self.playlist_pages.values() {
+            if let Some(track) = page
+                .items
+                .items
+                .iter()
+                .find_map(|item| match item.playable() {
+                    Some(PlayableItem::Track(track)) if track.uri == uri => Some(track.clone()),
+                    _ => None,
+                })
+            {
+                return Some(track);
+            }
+        }
+        if let Some(item) = self
+            .library
+            .liked
+            .items
+            .iter()
+            .find(|item| item.track.uri == uri)
+        {
+            return Some(item.track.clone());
+        }
+        self.plays
+            .plays()
+            .iter()
+            .find(|play| play.track.uri == uri)
+            .map(|play| play.track.clone())
     }
 
     /// The metadata for a row the engine is about to be told to play: the
@@ -25237,6 +25289,35 @@ mod tests {
         app.refresh_frame_now();
         assert!(!app.now_playing().unwrap().loading);
         app.backend.shutdown();
+    }
+
+    /// A play for a track the interface has shown answers from the lists it
+    /// already holds, instead of waiting on the throttled Web API.
+    #[test]
+    fn a_play_answers_metadata_from_the_loaded_lists() {
+        use crate::api::models::Track as ApiTrack;
+        use crate::model::{AlbumPage, PagedList};
+
+        let mut app = headless_app();
+        app.album_pages.insert(
+            "al".into(),
+            AlbumPage {
+                tracks: PagedList {
+                    items: vec![ApiTrack {
+                        id: Some("t".into()),
+                        uri: "spotify:track:t".into(),
+                        name: "Shown Song".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let track = app.local_track_for("spotify:track:t");
+        assert_eq!(track.title, "Shown Song");
+        let missing = app.local_track_for("spotify:track:never");
+        assert!(missing.title.is_empty(), "a total stranger still parks");
     }
 
     /// Playing a playlist whose page was never opened asks for its rows and
