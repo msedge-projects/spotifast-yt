@@ -139,6 +139,7 @@ impl YtEngine {
             want_play: true,
             play_id: 0,
             loaded: false,
+            awaiting: false,
             target_ms: 0,
             told_ms: 0,
         };
@@ -293,6 +294,8 @@ struct Actor {
     play_id: u64,
     /// mpv holds a playable file for the current song.
     loaded: bool,
+    /// A resolve for the current song is in flight.
+    awaiting: bool,
     /// Where the current song should start.
     target_ms: u32,
     /// The last position the interface was told, to throttle snapshots.
@@ -497,6 +500,7 @@ impl Actor {
             self.send(json!(["stop"]));
             return;
         }
+        self.awaiting = true;
         let query = format!("{} {}", entry.track.title, entry.track.artist_names());
         let yt_dlp = self.yt_dlp.clone();
         let messages = self.messages.clone();
@@ -520,7 +524,10 @@ impl Actor {
                     self.seek_command(self.target_ms);
                 }
             }
-            Err(message) => self.fail(&message),
+            Err(message) => {
+                self.awaiting = false;
+                self.fail(&message);
+            }
         }
     }
 
@@ -544,6 +551,7 @@ impl Actor {
             return;
         }
         self.loaded = true;
+        self.awaiting = false;
         self.send(json!(["set_property", "pause", !self.want_play]));
         let mut state = self
             .state
@@ -671,6 +679,13 @@ impl Actor {
     }
 
     fn toggle(&mut self) {
+        // Nothing is loaded in mpv (a failed resolve stopped it, say):
+        // pressing play starts the current song again.
+        if !self.loaded && !self.awaiting && self.current.is_some() {
+            self.want_play = true;
+            self.start(self.target_ms);
+            return;
+        }
         let playback = self
             .state
             .lock()
@@ -832,6 +847,7 @@ impl Actor {
         // not keep playing whatever it had while the state reports the
         // failure.
         self.loaded = false;
+        self.awaiting = false;
         self.send(json!(["stop"]));
         let mut state = self
             .state

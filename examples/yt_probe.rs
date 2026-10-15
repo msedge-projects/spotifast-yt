@@ -23,7 +23,9 @@
 //! Environment: `MUSIFY_YT_PROBE_TITLE_A` / `_B` change the search titles
 //! (defaults "Musify probe A" / "Musify probe B"); `MUSIFY_YT_PROBE_WAIT_SECS`
 //! caps every wait (default 30); `MUSIFY_YT_PROBE_SKIP_ADVANCE` skips the
-//! wait for the first song to end, for long real songs.
+//! wait for the first song to end, for long real songs; with a stub on
+//! PATH, `MUSIFY_YT_PROBE_STUB_DIR` (the stub's directory) enables the
+//! phase that fails one resolve on purpose and plays it on the retry.
 
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -280,6 +282,35 @@ fn main() -> Result<()> {
         },
     )?;
     println!("a metadata-less row waited and played on SetTrackMetadata");
+
+    // A failed resolve must not leave the play button lying: the state
+    // shows the error, and pressing play again starts the song (the stub
+    // fails once on purpose).
+    if let Some(stub) = std::env::var_os("MUSIFY_YT_PROBE_STUB_DIR") {
+        let marker = std::path::PathBuf::from(stub).join("fail-once");
+        std::fs::write(&marker, b"")?;
+        let recover = probe_track("spotify:track:probe-recover", "Musify probe recover".into());
+        engine.command(PlayerCommand::Load(LoadSpec {
+            uris: vec![recover.uri.clone()],
+            tracks: vec![recover.clone()],
+            play: true,
+            ..LoadSpec::default()
+        }))?;
+        wait_for(&events, wait, "the failed resolve to report", |state| {
+            state.error.is_some() && !state.loading
+        })?;
+        println!("a failed resolve reports its error");
+        engine.command(PlayerCommand::Toggle)?;
+        wait_for(&events, wait, "play to start the song again", |state| {
+            state.playback == Playback::Playing
+                && !state.loading
+                && state
+                    .track
+                    .as_ref()
+                    .is_some_and(|track| track.uri == recover.uri)
+        })?;
+        println!("play after the failure started the song");
+    }
 
     engine.shutdown();
     println!("PROBE PASS");
