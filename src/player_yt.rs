@@ -1,15 +1,17 @@
-//! Free-account playback through yt-dlp and mpv.
+//! Free-account playback through YouTube's InnerTube API and mpv.
 //!
 //! Spotify does not hand a free account the audio keys librespot needs, so
-//! this engine resolves each track's title to a direct audio URL with
-//! `yt-dlp` (a flag-only `-g` call: no download, no ffmpeg) and plays that
-//! URL through an `mpv` child process driven over mpv's JSON IPC. It lives
-//! beside the librespot engine: Premium accounts keep `player.rs`, free
-//! accounts get this one.
+//! this engine resolves each track's title to a direct audio URL: first
+//! through the InnerTube API impersonating the VISIONOS client (two HTTPS
+//! requests from this process, no JavaScript, no subprocess), and, when
+//! that is refused, through `yt-dlp` (a flag-only `-g` call: no download,
+//! no ffmpeg) as before. The URL plays through an `mpv` child process
+//! driven over mpv's JSON IPC. It lives beside the librespot engine:
+//! Premium accounts keep `player.rs`, free accounts get this one.
 //!
-//! Resolved URLs are kept briefly, and the next song is resolved while the
-//! current one plays, so starting a song normally does not wait on yt-dlp
-//! and the resolver's CPU burst stays away from the moment songs change.
+//! Resolved URLs are kept for as long as their own lifetime allows, and
+//! the next song is resolved while the current one plays, so starting a
+//! song normally does not wait on a search at all.
 //!
 //! The engine owns the queue itself. librespot's Spirc advances tracks for
 //! the Premium engine; here mpv reports the end of a track, and the engine
@@ -33,8 +35,9 @@ use crate::player::{
     EngineConfig, EngineEvent, Heard, Interrupted, LoadSpec, LocalState, LocalTrack, Notify,
     Playback, PlaybackResume, PlayerCommand, RepeatMode,
 };
+use crate::yt_resolver;
 
-/// How long one yt-dlp resolve may take before it is killed.
+/// How long the yt-dlp fallback resolve may take before it is killed.
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long mpv has to create its IPC pipe after the process starts.
 const IPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -45,10 +48,8 @@ const POSITION_NOTIFY_MS: u32 = 500;
 /// A Previous press within this of the start restarts the track instead of
 /// moving to the one before it, like librespot.
 const PREVIOUS_RESTART_MS: u32 = 3_000;
-/// How long a resolved direct URL may be reused for its track.
-const URL_TTL: Duration = Duration::from_secs(30 * 60);
 /// How long into a song the next one is resolved in the background. The wait
-/// keeps the resolver's CPU burst clear of the transition between songs.
+/// keeps a resolve clear of the transition between songs.
 const PREFETCH_DELAY: Duration = Duration::from_secs(10);
 
 /// The engine's actor messages: commands from the interface, mpv's events,
@@ -58,12 +59,12 @@ enum Message {
     Mpv(Value),
     Resolved {
         id: u64,
-        result: Result<String, String>,
+        result: Result<yt_resolver::Resolved, String>,
     },
     /// A background resolve for the next song finished.
     Prefetched {
         uri: String,
-        result: Result<String, String>,
+        result: Result<yt_resolver::Resolved, String>,
     },
     Closed,
 }
@@ -102,6 +103,7 @@ impl YtEngine {
                  in %LOCALAPPDATA%\\Programs\\mpv."
             )
         })?;
+        let resolver = Arc::new(yt_resolver::NativeResolver::new()?);
 
         let pipe = ipc_path();
         #[cfg(not(windows))]
@@ -148,6 +150,7 @@ impl YtEngine {
             interrupted: Arc::clone(&interrupted),
             shutting_down: Arc::clone(&shutting_down),
             yt_dlp,
+            resolver,
             list: Vec::new(),
             manual: VecDeque::new(),
             cursor: None,
@@ -286,6 +289,13 @@ impl Entry {
     }
 }
 
+/// A direct URL kept for a while, with the life YouTube gave it.
+struct CachedStream {
+    url: String,
+    at: Instant,
+    ttl: Duration,
+}
+
 /// The actor owns the queue and folds mpv's events into [`LocalState`].
 struct Actor {
     state: Arc<Mutex<LocalState>>,
@@ -299,6 +309,7 @@ struct Actor {
     interrupted: Arc<Mutex<Option<Interrupted>>>,
     shutting_down: Arc<AtomicBool>,
     yt_dlp: PathBuf,
+    resolver: Arc<yt_resolver::NativeResolver>,
     /// The context: the songs around the current one.
     list: Vec<Entry>,
     /// The user's queued songs, played before the context continues.
@@ -323,8 +334,8 @@ struct Actor {
     /// The last position the interface was told, to throttle snapshots.
     told_ms: u32,
     /// Direct URLs resolved recently, by track URI: a song starting from
-    /// here skips yt-dlp, and its CPU cost, entirely.
-    url_cache: HashMap<String, (String, Instant)>,
+    /// here skips the resolver, and its CPU cost, entirely.
+    url_cache: HashMap<String, CachedStream>,
     /// The track a background resolve is running for, so that only one runs
     /// at a time.
     prefetching: Option<String>,
@@ -550,10 +561,11 @@ impl Actor {
         let query = format!("{} {}", entry.track.title, entry.track.artist_names());
         log::info!("YouTube: resolving {}", entry.track.title);
         let yt_dlp = self.yt_dlp.clone();
+        let resolver = self.resolver.clone();
         let messages = self.messages.clone();
         tokio::spawn(async move {
             let started = Instant::now();
-            let result = resolve(&yt_dlp, query.trim())
+            let result = resolve(&resolver, &yt_dlp, query.trim())
                 .await
                 .map_err(|error| format!("{error:#}"));
             match &result {
@@ -564,16 +576,17 @@ impl Actor {
         });
     }
 
-    fn resolved(&mut self, id: u64, result: Result<String, String>) {
+    fn resolved(&mut self, id: u64, result: Result<yt_resolver::Resolved, String>) {
         if id != self.play_id {
             // A newer song is already loading; this URL is stale.
             return;
         }
         match result {
-            Ok(url) => {
+            Ok(stream) => {
+                let url = stream.url.clone();
                 let uri = self.current.as_ref().map(|entry| entry.uri.clone());
                 if let Some(uri) = uri {
-                    self.store_url(uri, url.clone());
+                    self.store_url(uri, stream);
                 }
                 self.send(json!(["loadfile", url, "replace"]));
                 if self.target_ms > 0 {
@@ -589,25 +602,35 @@ impl Actor {
 
     /// A direct URL for `uri`, if it was resolved recently enough to reuse.
     fn cached_url(&self, uri: &str) -> Option<String> {
-        self.url_cache
-            .get(uri)
-            .filter(|(_, at)| at.elapsed() < URL_TTL)
-            .map(|(url, _)| url.clone())
+        let cached = self.url_cache.get(uri)?;
+        if cached.at.elapsed() < cached.ttl {
+            Some(cached.url.clone())
+        } else {
+            None
+        }
     }
 
-    fn store_url(&mut self, uri: String, url: String) {
-        self.url_cache.retain(|_, (_, at)| at.elapsed() < URL_TTL);
-        self.url_cache.insert(uri, (url, Instant::now()));
+    fn store_url(&mut self, uri: String, stream: yt_resolver::Resolved) {
+        self.url_cache
+            .retain(|_, cached| cached.at.elapsed() < cached.ttl);
+        self.url_cache.insert(
+            uri,
+            CachedStream {
+                url: stream.url,
+                at: Instant::now(),
+                ttl: stream.ttl,
+            },
+        );
     }
 
     /// A background resolve finished: the URL waits in the cache for the
     /// song's turn.
-    fn prefetched(&mut self, uri: String, result: Result<String, String>) {
+    fn prefetched(&mut self, uri: String, result: Result<yt_resolver::Resolved, String>) {
         if self.prefetching.as_deref() == Some(uri.as_str()) {
             self.prefetching = None;
         }
-        if let Ok(url) = result {
-            self.store_url(uri, url);
+        if let Ok(stream) = result {
+            self.store_url(uri, stream);
         }
     }
 
@@ -641,13 +664,14 @@ impl Actor {
         let uri = entry.uri.clone();
         let query = format!("{} {}", entry.track.title, entry.track.artist_names());
         let yt_dlp = self.yt_dlp.clone();
+        let resolver = self.resolver.clone();
         let messages = self.messages.clone();
         self.prefetching = Some(uri.clone());
         log::info!("YouTube: prefetching the next song {}", entry.track.title);
         tokio::spawn(async move {
             tokio::time::sleep(PREFETCH_DELAY).await;
             let started = Instant::now();
-            let result = resolve(&yt_dlp, query.trim())
+            let result = resolve(&resolver, &yt_dlp, query.trim())
                 .await
                 .map_err(|error| format!("{error:#}"));
             match &result {
@@ -1205,7 +1229,24 @@ fn hide_console(command: &mut tokio::process::Command) {
 #[cfg(not(windows))]
 fn hide_console(_command: &mut tokio::process::Command) {}
 
-/// One flag-only resolve: the first stdout line of `yt-dlp -g` is the
+/// One resolve: the native InnerTube client first, `yt-dlp` when it is
+/// refused. The native path is the quiet default; the fallback is loud in
+/// the log so a client rotation is noticed.
+async fn resolve(
+    native: &yt_resolver::NativeResolver,
+    yt_dlp: &Path,
+    query: &str,
+) -> Result<yt_resolver::Resolved> {
+    match native.resolve(query).await {
+        Ok(stream) => Ok(stream),
+        Err(error) => {
+            log::warn!("YouTube: the native client failed ({error:#}); using yt-dlp");
+            resolve_yt_dlp(yt_dlp, query).await
+        }
+    }
+}
+
+/// The fallback resolve: the first stdout line of `yt-dlp -g` is the
 /// direct audio URL. Nothing is downloaded.
 ///
 /// The format selector is audio-only, and YouTube's player-stitched ads
@@ -1213,7 +1254,7 @@ fn hide_console(_command: &mut tokio::process::Command) {}
 /// mpv receives the song's own audio track, so playback carries no
 /// platform ads without any ad-specific code. Sponsor reads inside the
 /// content do remain; skipping those needs SponsorBlock (not included).
-async fn resolve(yt_dlp: &Path, query: &str) -> Result<String> {
+async fn resolve_yt_dlp(yt_dlp: &Path, query: &str) -> Result<yt_resolver::Resolved> {
     let mut command = yt_dlp_command(yt_dlp);
     command
         .arg("--ignore-config")
@@ -1245,12 +1286,16 @@ async fn resolve(yt_dlp: &Path, query: &str) -> Result<String> {
         return Err(anyhow!("YouTube could not answer for this song: {detail}"));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
+    let url = stdout
         .lines()
         .map(str::trim)
         .find(|line| line.starts_with("http"))
         .map(str::to_string)
-        .ok_or_else(|| anyhow!("YouTube has no audio for this song"))
+        .ok_or_else(|| anyhow!("YouTube has no audio for this song"))?;
+    Ok(yt_resolver::Resolved {
+        url,
+        ttl: yt_resolver::DEFAULT_URL_TTL,
+    })
 }
 
 #[cfg(test)]
