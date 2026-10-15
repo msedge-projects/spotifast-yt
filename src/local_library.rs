@@ -168,7 +168,7 @@ mod tests {
         );
 
         library.save().expect("the library saves");
-        let reloaded = LocalLibrary::load(path.clone());
+        let mut reloaded = LocalLibrary::load(path.clone());
         assert!(reloaded.is_liked("67vr-3kpX3Q"));
         assert_eq!(reloaded.playlists.len(), 1);
         assert_eq!(reloaded.playlists[0].name, "Night drive");
