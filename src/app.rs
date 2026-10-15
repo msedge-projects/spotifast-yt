@@ -6542,6 +6542,7 @@ impl App {
                 self.request_user_names(adders);
                 self.sample_playlist_tail(&id);
                 self.checkpoint_playlist_cache(&id);
+                self.replay_queued_context(&format!("spotify:playlist:{id}"));
                 // A sorted table means the whole list, not the loaded part.
                 if self.table_sorts.contains_key(&Page::Playlist(id.clone())) {
                     self.load_more(Page::Playlist(id));
@@ -7239,6 +7240,7 @@ impl App {
                     }
                 }
                 self.request_contains(uris);
+                self.replay_queued_context(&format!("spotify:album:{id}"));
                 // A sorted table means the whole list, not the loaded part.
                 if self.table_sorts.contains_key(&Page::Album(id.clone())) {
                     self.load_more(Page::Album(id));
@@ -8116,6 +8118,38 @@ impl App {
         self.play_search_serial = self.play_search_serial.wrapping_add(1);
     }
 
+    /// Asks for a context's rows when it is played before its page ever
+    /// loaded, so the play can be held until they arrive instead of sent as
+    /// an empty list. Only playlist and album contexts qualify; every other
+    /// context keeps its usual path.
+    fn wait_for_context_rows(&mut self, request: &PlayRequest) -> bool {
+        let Some(context) = request.context_uri.as_deref() else {
+            return false;
+        };
+        if let Some(id) = context.strip_prefix("spotify:playlist:") {
+            self.ensure_loaded(Page::Playlist(id.to_string()));
+            true
+        } else if let Some(id) = context.strip_prefix("spotify:album:") {
+            self.ensure_loaded(Page::Album(id.to_string()));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Replays a held play when the context it waits on arrives, and leaves
+    /// any other held play alone.
+    fn replay_queued_context(&mut self, context: &str) {
+        if self
+            .queued_play
+            .as_ref()
+            .and_then(|request| request.context_uri.as_deref())
+            == Some(context)
+        {
+            self.replay_queued_play();
+        }
+    }
+
     /// Replays a play that waited for the engine or the session. It keeps
     /// the precedence it took when it was asked for, so a play-search sent
     /// while it waited still plays its match.
@@ -8202,6 +8236,15 @@ impl App {
                 } else {
                     local_load(&request, shuffle)
                 };
+                if self.yt_playback && load.uris.is_empty() && self.wait_for_context_rows(&request)
+                {
+                    // The context's rows are not loaded yet (its page was
+                    // never opened, and the Web API is slow): ask for them
+                    // and hold the play; the answer replays it. An empty
+                    // load the engine can only refuse is worse.
+                    self.queued_play = Some(request);
+                    return;
+                }
                 load.repeat = Some(self.local.repeat);
                 self.local_list = if self.yt_playback {
                     // The YouTube engine resolves the rows itself; the
@@ -8311,6 +8354,7 @@ impl App {
         }
         self.try_adopt_playlist_cache(id);
         self.checkpoint_playlist_cache(id);
+        self.replay_queued_context(&format!("spotify:playlist:{id}"));
     }
 
     fn receive_playlist_cache_stored(
@@ -25192,6 +25236,59 @@ mod tests {
         app.handle_local(started);
         app.refresh_frame_now();
         assert!(!app.now_playing().unwrap().loading);
+        app.backend.shutdown();
+    }
+
+    /// Playing a playlist whose page was never opened asks for its rows and
+    /// holds the play; the rows arriving replay it, instead of the engine
+    /// being handed an empty list it can only refuse.
+    #[test]
+    fn playing_a_playlist_before_its_rows_load_waits_for_them() {
+        let mut app = connected_listener();
+        app.yt_playback = true;
+        app.remote = None;
+        app.selected_device = None;
+        app.local = LocalState {
+            connected: true,
+            ..Default::default()
+        };
+        app.play_request(PlayRequest::context("spotify:playlist:never-opened"), false);
+        assert!(
+            app.queued_play.is_some(),
+            "the play waits for the playlist's rows"
+        );
+        assert!(
+            app.playlist_pages.contains_key("never-opened"),
+            "and asked for the page"
+        );
+        let generation = app.playlist_pages["never-opened"].generation;
+        assert!(
+            app.playlist_pages["never-opened"].items.loading,
+            "the rows request is in flight"
+        );
+
+        app.handle_api(ApiResponse::PlaylistItems {
+            id: "never-opened".into(),
+            offset: 0,
+            generation,
+            result: Ok(crate::api::models::Page {
+                items: vec![
+                    cached_playlist_row("spotify:track:first"),
+                    cached_playlist_row("spotify:track:second"),
+                ],
+                total: 2,
+                limit: 50,
+                ..Default::default()
+            }),
+        });
+        assert!(
+            app.queued_play.is_none(),
+            "the arriving rows replayed the play"
+        );
+        assert!(
+            app.optimistic_playing.is_some(),
+            "the load went out once the rows arrived"
+        );
         app.backend.shutdown();
     }
 
