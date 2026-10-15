@@ -167,6 +167,7 @@ impl YtEngine {
             url_cache: HashMap::new(),
             prefetching: None,
             retried_uri: None,
+            resolve_failures: 0,
         };
         tokio::spawn(run_actor(actor, receiver));
         tokio::spawn(run_writer(writer, mpv_receiver));
@@ -342,6 +343,9 @@ struct Actor {
     /// The song whose load failed once and was resolved again, so a repeated
     /// failure is not retried forever.
     retried_uri: Option<String>,
+    /// Songs that failed to resolve in a row; a run of unavailable songs is
+    /// skipped over, but not forever.
+    resolve_failures: u32,
 }
 
 async fn run_actor(mut actor: Actor, mut messages: mpsc::UnboundedReceiver<Message>) {
@@ -583,6 +587,7 @@ impl Actor {
         }
         match result {
             Ok(stream) => {
+                self.resolve_failures = 0;
                 let url = stream.url.clone();
                 let uri = self.current.as_ref().map(|entry| entry.uri.clone());
                 if let Some(uri) = uri {
@@ -595,7 +600,21 @@ impl Actor {
             }
             Err(message) => {
                 self.awaiting = false;
-                self.fail(&message);
+                // A song YouTube cannot serve must not stop the music: skip
+                // it, but not forever through a list of songs it cannot
+                // serve.
+                if self.resolve_failures < 3 && self.next_entry().is_some() {
+                    self.resolve_failures += 1;
+                    let title = self
+                        .current
+                        .as_ref()
+                        .map(|entry| entry.track.title.as_str())
+                        .unwrap_or("an unnamed song");
+                    log::info!("YouTube: skipping {title} ({message})");
+                    self.advance();
+                } else {
+                    self.fail(&message);
+                }
             }
         }
     }
