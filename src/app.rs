@@ -7921,7 +7921,12 @@ impl App {
                     uris.push(context.clone());
                 }
             } else if let Some(rows) = self.context_track_uris(context) {
-                uris = rows;
+                // Local files have no YouTube counterpart; leave them
+                // out rather than parking a row nothing can resolve.
+                uris = rows
+                    .into_iter()
+                    .filter(|uri| util::uri_kind(uri) != Some("local"))
+                    .collect();
             } else if let Some(uri) = &request.offset_uri {
                 // The context's rows are not loaded (resuming a playlist
                 // from a fresh start, say). The named row still plays;
@@ -25793,6 +25798,42 @@ mod tests {
         assert_eq!(resumed.uris, ["spotify:track:a"]);
         assert_eq!(resumed.offset_uri.as_deref(), Some("spotify:track:a"));
         assert_eq!(resumed.tracks[0].title, "Song");
+
+        // A loaded playlist materializes, but a local file has no YouTube
+        // counterpart and is left out rather than parked forever.
+        use crate::api::models::{PlayableItem, PlaylistItem};
+        use crate::model::PagedList;
+        let row = |track: ApiTrack| PlaylistItem {
+            item: Some(PlayableItem::Track(track)),
+            ..Default::default()
+        };
+        app.playlist_pages.insert(
+            "pl".into(),
+            PlaylistPage {
+                items: PagedList {
+                    items: vec![
+                        row(ApiTrack {
+                            id: Some("a".into()),
+                            uri: "spotify:track:a".into(),
+                            name: "Song".into(),
+                            ..Default::default()
+                        }),
+                        row(ApiTrack {
+                            id: Some("local".into()),
+                            uri: "spotify:local:Artist:Album:Song:120".into(),
+                            name: "On this computer".into(),
+                            is_local: true,
+                            ..Default::default()
+                        }),
+                    ],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let context = app.yt_load(&PlayRequest::context("spotify:playlist:pl"), false);
+        assert_eq!(context.uris, ["spotify:track:a"]);
+        assert_eq!(context.tracks.len(), 1);
     }
 
     /// The YouTube engine parks a row it has no metadata for; when the app
