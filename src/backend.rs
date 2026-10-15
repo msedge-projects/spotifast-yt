@@ -3564,6 +3564,7 @@ impl Worker {
         if !self.engine_retry_quiet {
             self.emit(Event::Playback(LocalPlayback::Connecting));
         }
+        log::info!("starting the YouTube playback engine (mpv + yt-dlp)");
         let config = self.engine_config.clone();
         let notify = self.yt_notify();
         let commands = self.commands.clone();
@@ -3640,6 +3641,7 @@ impl Worker {
                 }
                 self.yt = Some(engine);
                 self.reconnects.clear();
+                log::info!("YouTube playback engine is up (device {device_id})");
                 self.emit(Event::Playback(LocalPlayback::Ready { device_id }));
             }
             None => {
