@@ -662,6 +662,17 @@ pub(crate) fn run() -> eframe::Result<()> {
                 }
                 app.attach(&cc.egui_ctx);
                 #[cfg(windows)]
+                let window_hwnd = {
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    match cc.window_handle() {
+                        Ok(handle) => match handle.as_raw() {
+                            RawWindowHandle::Win32(window) => window.hwnd.get(),
+                            _ => 0,
+                        },
+                        Err(_) => 0,
+                    }
+                };
+                #[cfg(windows)]
                 let thumbbar = {
                     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
                     let mut toolbar = musify::thumbbar::ThumbBar::new();
@@ -683,6 +694,10 @@ pub(crate) fn run() -> eframe::Result<()> {
                     geometry_checked: false,
                     #[cfg(windows)]
                     thumbbar,
+                    #[cfg(windows)]
+                    window_hwnd,
+                    #[cfg(windows)]
+                    caption_tint: None,
                     #[cfg(feature = "demo")]
                     shot: creator_shot.clone(),
                     #[cfg(feature = "demo")]
@@ -746,6 +761,13 @@ fn main_geometry(app: &app::App) -> Geometry {
 
 const fn main_window_decorated(custom_titlebar: bool) -> bool {
     !custom_titlebar
+}
+
+/// The DWM caption colour for a tint: 0x00BBGGRR as Win32 wants it.
+#[cfg(windows)]
+fn caption_colorref(tint: egui::Color32) -> u32 {
+    let [r, g, b, _] = tint.to_array();
+    u32::from(r) | (u32::from(g) << 8) | (u32::from(b) << 16)
 }
 
 #[cfg(any(test, feature = "demo"))]
@@ -1215,6 +1237,13 @@ struct Shell {
     recovery_checked: bool,
     /// Whether this window's first frame restored the saved window state.
     geometry_checked: bool,
+    /// The main window's handle, for chrome the app paints through DWM.
+    #[cfg(windows)]
+    window_hwnd: isize,
+    /// The caption colour last written, so it changes only when the tint
+    /// does.
+    #[cfg(windows)]
+    caption_tint: Option<u32>,
     #[cfg(windows)]
     thumbbar: musify::thumbbar::ThumbBar,
     /// A pending `--demo-shot` capture, if this is a screenshot run.
@@ -1276,6 +1305,15 @@ impl Shell {
         // walk-down lives in App::visualiser_fps.
         if ctx.input(|i| !i.events.is_empty()) {
             app.note_input();
+        }
+        #[cfg(windows)]
+        if self.window_hwnd != 0 {
+            let tint = musify::ui::caption_tint(app);
+            let colorref = caption_colorref(tint);
+            if self.caption_tint != Some(colorref) {
+                musify::window::set_caption_color(self.window_hwnd, colorref);
+                self.caption_tint = Some(colorref);
+            }
         }
         #[cfg(target_os = "macos")]
         for command in musify::mac_menu::drain_commands() {

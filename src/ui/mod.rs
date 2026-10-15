@@ -342,6 +342,21 @@ fn header_wash(
     (palette.tint.a() > 0).then_some((palette.tint, Color32::TRANSPARENT))
 }
 
+/// The colour the system title bar should wear over this page: the top of
+/// the page's wash, so the chrome reads as part of the window instead of a
+/// band above it.
+pub fn caption_tint(app: &mut App) -> Color32 {
+    let page = app.page().clone();
+    let overview = matches!(
+        page,
+        Page::Home | Page::Search | Page::Settings | Page::Queue
+    );
+    let tint = page_tint(app);
+    header_wash(&app.palette, overview, tint)
+        .map(|(top, _)| top)
+        .unwrap_or(app.palette.window)
+}
+
 /// Where the header's wash is painted: the top of the panel, moved up by
 /// how far the page has scrolled, so it leaves with the hero.
 fn header_rect(panel: Rect, scrolled: f32) -> Rect {

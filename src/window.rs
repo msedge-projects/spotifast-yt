@@ -3,6 +3,31 @@
 //! eframe already places the window on-screen. The session can still refer
 //! to a monitor that was unplugged, so check before moving the window there.
 
+/// Paints the system title bar with the window's own tint (Windows 11; the
+/// call fails harmlessly where unsupported), so the chrome reads as part of
+/// the app instead of a band over it.
+#[cfg(windows)]
+pub fn set_caption_color(hwnd: isize, color: u32) {
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: *mut core::ffi::c_void,
+            attribute: u32,
+            value: *const core::ffi::c_void,
+            size: u32,
+        ) -> i32;
+    }
+    const DWMWA_CAPTION_COLOR: u32 = 34;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd as *mut core::ffi::c_void,
+            DWMWA_CAPTION_COLOR,
+            (&color as *const u32).cast(),
+            core::mem::size_of::<u32>() as u32,
+        );
+    }
+}
+
 /// Why a Wayland window cannot be kept above others from the app, and what
 /// to do instead.
 pub fn on_top_unavailable(locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
