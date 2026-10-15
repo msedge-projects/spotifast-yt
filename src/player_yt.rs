@@ -538,6 +538,7 @@ impl Actor {
         if let Some(url) = self.cached_url(&entry.uri) {
             // Resolved already, by the prefetch made while the last song
             // played, or by an earlier play: start without yt-dlp.
+            log::info!("YouTube: reusing a cached URL for {}", entry.track.title);
             self.awaiting = false;
             self.send(json!(["loadfile", url, "replace"]));
             if position_ms > 0 {
@@ -547,12 +548,18 @@ impl Actor {
         }
         self.awaiting = true;
         let query = format!("{} {}", entry.track.title, entry.track.artist_names());
+        log::info!("YouTube: resolving {}", entry.track.title);
         let yt_dlp = self.yt_dlp.clone();
         let messages = self.messages.clone();
         tokio::spawn(async move {
+            let started = Instant::now();
             let result = resolve(&yt_dlp, query.trim())
                 .await
                 .map_err(|error| format!("{error:#}"));
+            match &result {
+                Ok(_) => log::info!("YouTube: resolved in {} ms", started.elapsed().as_millis()),
+                Err(error) => log::warn!("YouTube: resolve failed: {error}"),
+            }
             let _ = messages.send(Message::Resolved { id, result });
         });
     }
@@ -636,11 +643,22 @@ impl Actor {
         let yt_dlp = self.yt_dlp.clone();
         let messages = self.messages.clone();
         self.prefetching = Some(uri.clone());
+        log::info!("YouTube: prefetching the next song {}", entry.track.title);
         tokio::spawn(async move {
             tokio::time::sleep(PREFETCH_DELAY).await;
+            let started = Instant::now();
             let result = resolve(&yt_dlp, query.trim())
                 .await
                 .map_err(|error| format!("{error:#}"));
+            match &result {
+                Ok(_) => log::info!(
+                    "YouTube: prefetched the next song in {} ms",
+                    started.elapsed().as_millis()
+                ),
+                Err(error) => {
+                    log::info!("YouTube: prefetch failed ({error}); it will resolve on demand")
+                }
+            }
             let _ = messages.send(Message::Prefetched { uri, result });
         });
     }
@@ -721,6 +739,7 @@ impl Actor {
                     self.url_cache.remove(&entry.uri);
                     // One fresh resolve, then the failure stands.
                     if self.retried_uri.as_deref() != Some(entry.uri.as_str()) {
+                        log::warn!("YouTube: load failed ({detail}), resolving again");
                         self.retried_uri = Some(entry.uri.clone());
                         self.start(position);
                         return;
