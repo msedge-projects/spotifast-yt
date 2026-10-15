@@ -7,3 +7,4 @@ A personal fork of [crmne/spotifast](https://github.com/crmne/spotifast) (MIT), 
 - Playback streams public YouTube audio client-side, the way Spotube does; it circumvents neither service's server-side protections. Personal use only.
 - Windows binaries are built from source via GitHub Actions (artifact `musify-windows-x64`, containing `musify.exe`). See [LICENSE](LICENSE) (MIT).
 - Do not open issues about this fork upstream; upstream's contribution policy forbids alternate audio sources.
+- **YouTube mode** (`"youtube_mode": true` in `settings.json`): the app opens with no Spotify account at all. Search answers from YouTube Music's own search and every result plays through the YouTube engine; no Spotify request goes out. The library and playlists follow in later milestones.

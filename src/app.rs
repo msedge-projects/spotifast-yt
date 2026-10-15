@@ -586,6 +586,9 @@ pub struct App {
     /// The signed-in account is a free one: local playback goes through
     /// the YouTube engine, and the Premium notice would be wrong.
     pub yt_playback: bool,
+    /// The interface runs without a Spotify account: YouTube search and
+    /// the app's own library are the whole interface.
+    pub youtube_mode: bool,
     /// Context shown immediately after play, until Spotify confirms it. An
     /// empty URI means a plain track list, whose lack of a context must also
     /// hide stale state.
@@ -806,6 +809,13 @@ impl App {
         // The legacy password file has no endpoint of its own. Keep the old
         // settings beside it until migration binds that password in the store.
         settings.proxy_password_legacy |= dirs.proxy_secret_file().try_exists().unwrap_or(true);
+        // YouTube mode never talks to Spotify: no grant is restored and
+        // no Spotify request goes out.
+        let youtube_mode = settings.youtube_mode;
+        let options = AppOptions {
+            restore_sign_in: options.restore_sign_in && !youtube_mode,
+            ..options
+        };
         let plays = crate::history::History::load(&dirs.history_file());
         let tap = crate::vis::AudioTap::new();
         let eq = crate::eq::shared();
@@ -1071,6 +1081,7 @@ impl App {
             unavailable_at: Vec::new(),
             last_unavailable_reconnect: None,
             yt_playback: false,
+            youtube_mode,
             assumed_context: None,
             last_now_playing_uri: None,
             last_now_playing_sequence: 0,
@@ -1128,6 +1139,21 @@ impl App {
             player_bar_analyser: crate::vis::WideAnalyser::default(),
             pixels_per_point: 1.0,
         };
+        if youtube_mode {
+            // The interface opens straight into the main pages: no Spotify
+            // account is involved, and the YouTube engine is the playback.
+            app.auth = AuthStatus::Connected {
+                username: "YouTube".to_string(),
+            };
+            app.user = Some(User {
+                id: "youtube".to_string(),
+                display_name: Some("YouTube".to_string()),
+                product: Some("free".to_string()),
+                ..Default::default()
+            });
+            app.yt_playback = true;
+            app.backend.youtube_mode();
+        }
         app.local.volume = app.settings.volume;
         // What was played here is on disk and needs nothing from the
         // network, so the tab has rows before Spotify has answered.
@@ -2288,6 +2314,10 @@ impl App {
     }
 
     fn handle_auth(&mut self, status: AuthStatus) {
+        if self.youtube_mode {
+            // There is no Spotify account to sign in or out.
+            return;
+        }
         match &status {
             AuthStatus::Connected { .. } => {
                 self.sign_in_url = None;
@@ -7149,17 +7179,21 @@ impl App {
                 self.search.catalogue_pending = false;
                 match result {
                     Ok(results) => {
-                        let uris = results
-                            .tracks
-                            .iter()
-                            .flat_map(|page| page.items.iter())
-                            .map(|track| track.uri.clone())
-                            .collect();
-                        self.request_contains(uris);
+                        if !self.youtube_mode {
+                            let uris = results
+                                .tracks
+                                .iter()
+                                .flat_map(|page| page.items.iter())
+                                .map(|track| track.uri.clone())
+                                .collect();
+                            self.request_contains(uris);
+                        }
                         self.remember_search(&query);
                         self.search.results = Loadable::Loaded(results);
                         self.search.results_serial = serial;
-                        self.show_search_playlists();
+                        if !self.youtube_mode {
+                            self.show_search_playlists();
+                        }
                     }
                     Err(error) => self.search_failed(&gettext(self.locale, "Search"), error),
                 }
@@ -8051,6 +8085,14 @@ impl App {
     /// can be throttled for a minute at a time) to learn a title it is
     /// already drawing; a row found nowhere still parks for the engine.
     fn cached_track_anywhere(&self, uri: &str) -> Option<Track> {
+        // The search results the user is looking at: a row clicked there
+        // plays with the metadata it was drawn with, before any request.
+        if let Loadable::Loaded(results) = &self.search.results
+            && let Some(page) = &results.tracks
+            && let Some(track) = page.items.iter().find(|track| track.uri == uri)
+        {
+            return Some(track.clone());
+        }
         for page in self.album_pages.values() {
             if let Some(track) = page.tracks.items.iter().find(|track| track.uri == uri) {
                 return Some(track.clone());

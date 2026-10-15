@@ -703,6 +703,9 @@ pub enum Command {
         error: Option<String>,
         attempt: u64,
     },
+    /// The interface asked to run without a Spotify account: YouTube is
+    /// the whole playback and no Spotify request goes out.
+    YouTubeMode,
     /// OS reports network reachability changed.
     NetworkStatus(bool),
     /// Internal: librespot's session ended on its own.
@@ -1135,6 +1138,12 @@ impl Backend {
     #[cfg_attr(not(any(test, feature = "demo")), allow(dead_code))]
     pub fn set_offline(&mut self, offline: bool) {
         self.offline = offline;
+    }
+
+    /// Runs the interface without a Spotify account: the YouTube engine
+    /// becomes the playback and no Spotify request goes out.
+    pub fn youtube_mode(&self) {
+        self.send(Command::YouTubeMode);
     }
 
     pub fn send(&self, command: Command) {
@@ -1584,6 +1593,91 @@ impl PlaylistHeaderLookup {
     }
 }
 
+/// A YouTube Music result page shaped like a Spotify search answer: rows
+/// carry a `yt:<video id>` URI plus the title, artist text, duration, and
+/// artwork, which is everything a row needs to draw and the engine needs
+/// to resolve.
+fn youtube_results(tracks: Vec<crate::yt_resolver::YtTrack>) -> crate::api::models::SearchResults {
+    let items = tracks
+        .into_iter()
+        .map(|track| {
+            let mut images = Vec::new();
+            if let Some(url) = track.art_url {
+                images.push(crate::api::models::Image {
+                    url,
+                    ..Default::default()
+                });
+            }
+            let artists = if track.artists.is_empty() {
+                Vec::new()
+            } else {
+                vec![crate::api::models::ArtistRef {
+                    name: track.artists,
+                    ..Default::default()
+                }]
+            };
+            crate::api::models::Track {
+                id: Some(track.video_id.clone()),
+                name: track.title,
+                uri: format!("yt:{}", track.video_id),
+                duration_ms: track.duration_ms.min(u64::from(u32::MAX)) as u32,
+                artists,
+                album: Some(crate::api::models::Album {
+                    name: track.album,
+                    images,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        })
+        .collect::<Vec<_>>();
+    let total = items.len() as u32;
+    crate::api::models::SearchResults {
+        tracks: Some(crate::api::models::Page {
+            items,
+            total,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod youtube_result_tests {
+    use super::youtube_results;
+
+    #[test]
+    fn a_youtube_row_carries_what_the_row_and_the_engine_need() {
+        let results = youtube_results(vec![crate::yt_resolver::YtTrack {
+            video_id: "67vr-3kpX3Q".to_string(),
+            title: "Alright".to_string(),
+            artists: "Kendrick Lamar".to_string(),
+            album: "To Pimp A Butterfly".to_string(),
+            duration_ms: 233_000,
+            art_url: Some("https://lh3.googleusercontent.com/art".to_string()),
+            official_audio: true,
+        }]);
+        let page = results.tracks.expect("a track page");
+        assert_eq!(page.total, 1);
+        let row = &page.items[0];
+        assert_eq!(row.uri, "yt:67vr-3kpX3Q");
+        assert_eq!(row.name, "Alright");
+        assert_eq!(row.artists[0].name, "Kendrick Lamar");
+        assert_eq!(
+            row.album.as_ref().map(|album| album.name.as_str()),
+            Some("To Pimp A Butterfly")
+        );
+        assert_eq!(row.duration_ms, 233_000);
+        assert_eq!(
+            row.album
+                .as_ref()
+                .and_then(|album| album.images.first())
+                .map(|image| image.url.as_str()),
+            Some("https://lh3.googleusercontent.com/art")
+        );
+    }
+}
+
 struct Worker {
     dirs: AppDirs,
     credentials: CredentialStore,
@@ -1642,6 +1736,11 @@ struct Worker {
     /// attempt was in flight. Its result is stale and must not be installed.
     engine_restart_pending: bool,
     signed_in: bool,
+    /// The interface runs without a Spotify account: the YouTube engine is
+    /// the playback and no Spotify request goes out.
+    youtube_mode: bool,
+    /// The native YouTube resolver behind YouTube-mode search.
+    yt_search: Option<Arc<crate::yt_resolver::NativeResolver>>,
     /// The plan, once the Web API has answered.
     premium: Option<bool>,
     cancel_signin: Option<watch::Sender<bool>>,
@@ -1723,6 +1822,8 @@ impl Worker {
             search_tasks: Vec::new(),
             engine_restart_pending: false,
             signed_in: false,
+            youtube_mode: false,
+            yt_search: None,
             premium: None,
             cancel_signin: None,
             authorizing_source: None,
@@ -2204,6 +2305,7 @@ impl Worker {
                         engine.shutdown();
                     }
                 }
+                Command::YouTubeMode => self.enter_youtube_mode(),
                 Command::NetworkStatus(reachable) => {
                     self.network_reachable = reachable;
                     self.emit(Event::NetworkStatus(reachable));
@@ -3024,6 +3126,18 @@ impl Worker {
         }
         self.emit(Event::Playback(LocalPlayback::Unavailable));
         self.emit(Event::Auth(AuthStatus::SignedOut));
+    }
+
+    /// Runs the interface without a Spotify account: from here the YouTube
+    /// engine is the playback and no Spotify request goes out.
+    fn enter_youtube_mode(&mut self) {
+        self.youtube_mode = true;
+        self.signed_in = true;
+        match crate::yt_resolver::NativeResolver::new() {
+            Ok(resolver) => self.yt_search = Some(Arc::new(resolver)),
+            Err(error) => log::warn!("YouTube search is unavailable: {error:#}"),
+        }
+        self.on_account_checked(Some(false));
     }
 
     // ---- local playback engine -------------------------------------------
@@ -4277,6 +4391,10 @@ impl Worker {
         if query.is_empty() {
             return;
         }
+        if self.youtube_mode {
+            self.search_youtube(query, serial);
+            return;
+        }
         let split = self.api.personal_ready();
         self.emit(Event::Api(Box::new(ApiResponse::SearchStarted {
             query: query.clone(),
@@ -4296,6 +4414,39 @@ impl Worker {
             ApiRequest::Search { query, serial }
         };
         self.search_tasks.push(self.dispatch(request));
+    }
+
+    /// A YouTube-mode search: the native resolver answers, and the results
+    /// are shaped like Spotify's so the Search page draws and plays them
+    /// unchanged.
+    fn search_youtube(&mut self, query: String, serial: u64) {
+        self.emit(Event::Api(Box::new(ApiResponse::SearchStarted {
+            query: query.clone(),
+            serial,
+            split: false,
+        })));
+        let events = self.events.clone();
+        let waker = self.waker.clone();
+        let resolver = self.yt_search.clone();
+        let task = tokio::spawn(async move {
+            let result = match resolver {
+                Some(resolver) => resolver
+                    .search_music(&query)
+                    .await
+                    .map(youtube_results)
+                    .map_err(|error| ApiError::Network(format!("{error:#}"))),
+                None => Err(ApiError::Network(
+                    "the YouTube search client is not available".into(),
+                )),
+            };
+            let _ = events.send(Event::Api(Box::new(ApiResponse::Search {
+                query,
+                serial,
+                result,
+            })));
+            waker.wake();
+        });
+        self.search_tasks.push(task.abort_handle());
     }
 
     /// Cancel requests on sign-out and report completion under their original generation.

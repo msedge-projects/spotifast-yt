@@ -290,6 +290,9 @@ pub struct Settings {
     pub middle_click_autoscroll: bool,
     pub search_history: Vec<String>,
     pub show_shortcut_hints: bool,
+    /// Run without a Spotify account: YouTube search and the app's own
+    /// library are the whole interface, and no Spotify request goes out.
+    pub youtube_mode: bool,
     /// An optional personal Spotify Web API application id. The shared
     /// application remains active for coverage when this is present.
     pub web_client_id: Option<String>,
@@ -455,6 +458,7 @@ impl Default for Settings {
             middle_click_autoscroll: false,
             search_history: Vec::new(),
             show_shortcut_hints: true,
+            youtube_mode: false,
             web_client_id: None,
             personal_app_nudge_at: None,
             personal_app_intro_seen: false,
@@ -1311,6 +1315,19 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let restored: Settings = serde_json::from_str(&json).unwrap();
         assert!(restored.middle_click_autoscroll);
+    }
+
+    #[test]
+    fn youtube_mode_is_off_for_older_files_and_round_trips() {
+        let older: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!older.youtube_mode);
+        let chosen = Settings {
+            youtube_mode: true,
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&chosen).unwrap();
+        let restored: Settings = serde_json::from_str(&json).unwrap();
+        assert!(restored.youtube_mode);
     }
 
     #[test]
