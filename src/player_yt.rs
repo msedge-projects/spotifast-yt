@@ -114,6 +114,11 @@ impl YtEngine {
             .arg("--really-quiet")
             .arg(format!("--input-ipc-server={}", pipe.display()))
             .arg("--ytdl=no")
+            // A stalled stream fails in twenty seconds instead of a
+            // minute, and short drops reconnect instead of ending the
+            // track: both give the retry a healthy baseline to resume.
+            .arg("--network-timeout=20")
+            .arg("--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5")
             .arg(format!(
                 "--volume={}",
                 volume_percent(config.initial_volume)
@@ -700,21 +705,27 @@ impl Actor {
             }
             Some("error") => {
                 self.loaded = false;
-                // A stream can be refused: an expired cached URL, a
-                // transient 403. Resolve the song afresh and try once more
-                // before reporting the failure.
-                if let Some(entry) = self.current.clone()
-                    && self.retried_uri.as_deref() != Some(entry.uri.as_str())
-                {
-                    self.retried_uri = Some(entry.uri.clone());
-                    self.url_cache.remove(&entry.uri);
-                    self.start(self.target_ms);
-                    return;
-                }
                 let detail = value
                     .get("file_error")
                     .and_then(Value::as_str)
                     .unwrap_or("mpv could not play this stream");
+                let position = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .position_now();
+                // The URL that failed is never reused, whether or not a
+                // retry is left: a bad URL in the cache must not poison
+                // every later play of the song.
+                if let Some(entry) = self.current.clone() {
+                    self.url_cache.remove(&entry.uri);
+                    // One fresh resolve, then the failure stands.
+                    if self.retried_uri.as_deref() != Some(entry.uri.as_str()) {
+                        self.retried_uri = Some(entry.uri.clone());
+                        self.start(position);
+                        return;
+                    }
+                }
                 self.fail(&format!("Playback stopped: {detail}"));
             }
             // "stop" and "quit" follow our own loadfile and shutdown.
@@ -802,9 +813,11 @@ impl Actor {
 
     fn toggle(&mut self) {
         // Nothing is loaded in mpv (a failed resolve stopped it, say):
-        // pressing play starts the current song again.
+        // pressing play starts the current song again, with a fresh
+        // one-retry budget.
         if !self.loaded && !self.awaiting && self.current.is_some() {
             self.want_play = true;
+            self.retried_uri = None;
             self.start(self.target_ms);
             return;
         }
