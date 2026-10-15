@@ -706,6 +706,15 @@ pub enum Command {
     /// The interface asked to run without a Spotify account: YouTube is
     /// the whole playback and no Spotify request goes out.
     YouTubeMode,
+    /// Internal: a YouTube search in YouTube mode finished: its rows and
+    /// the answer for the Search or PlaySearch request that asked.
+    YtSearchDone {
+        query: String,
+        serial: u64,
+        /// The answer belongs to a play-search.
+        play: bool,
+        result: Result<Vec<crate::yt_resolver::YtTrack>, String>,
+    },
     /// OS reports network reachability changed.
     NetworkStatus(bool),
     /// Internal: librespot's session ended on its own.
@@ -1593,44 +1602,43 @@ impl PlaylistHeaderLookup {
     }
 }
 
-/// A YouTube Music result page shaped like a Spotify search answer: rows
-/// carry a `yt:<video id>` URI plus the title, artist text, duration, and
-/// artwork, which is everything a row needs to draw and the engine needs
-/// to resolve.
+/// One YouTube result as a Spotify-shaped row carrying its `yt:<video id>`
+/// URI with the title, artist text, duration, and artwork a row draws and
+/// the engine plays by.
+fn youtube_row(track: crate::yt_resolver::YtTrack) -> crate::api::models::Track {
+    let mut images = Vec::new();
+    if let Some(url) = track.art_url {
+        images.push(crate::api::models::Image {
+            url,
+            ..Default::default()
+        });
+    }
+    let artists = if track.artists.is_empty() {
+        Vec::new()
+    } else {
+        vec![crate::api::models::ArtistRef {
+            name: track.artists,
+            ..Default::default()
+        }]
+    };
+    crate::api::models::Track {
+        id: Some(track.video_id.clone()),
+        name: track.title,
+        uri: format!("yt:{}", track.video_id),
+        duration_ms: track.duration_ms.min(u64::from(u32::MAX)) as u32,
+        artists,
+        album: Some(crate::api::models::Album {
+            name: track.album,
+            images,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// A YouTube Music result page shaped like a Spotify search answer.
 fn youtube_results(tracks: Vec<crate::yt_resolver::YtTrack>) -> crate::api::models::SearchResults {
-    let items = tracks
-        .into_iter()
-        .map(|track| {
-            let mut images = Vec::new();
-            if let Some(url) = track.art_url {
-                images.push(crate::api::models::Image {
-                    url,
-                    ..Default::default()
-                });
-            }
-            let artists = if track.artists.is_empty() {
-                Vec::new()
-            } else {
-                vec![crate::api::models::ArtistRef {
-                    name: track.artists,
-                    ..Default::default()
-                }]
-            };
-            crate::api::models::Track {
-                id: Some(track.video_id.clone()),
-                name: track.title,
-                uri: format!("yt:{}", track.video_id),
-                duration_ms: track.duration_ms.min(u64::from(u32::MAX)) as u32,
-                artists,
-                album: Some(crate::api::models::Album {
-                    name: track.album,
-                    images,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }
-        })
-        .collect::<Vec<_>>();
+    let items = tracks.into_iter().map(youtube_row).collect::<Vec<_>>();
     let total = items.len() as u32;
     crate::api::models::SearchResults {
         tracks: Some(crate::api::models::Page {
@@ -1639,6 +1647,25 @@ fn youtube_results(tracks: Vec<crate::yt_resolver::YtTrack>) -> crate::api::mode
             ..Default::default()
         }),
         ..Default::default()
+    }
+}
+
+/// The engine's own words for a row YouTube named: handed over with every
+/// search answer so a play and the queue draw the song before any lookup.
+fn local_track_of_row(track: &crate::api::models::Track) -> crate::player::LocalTrack {
+    crate::player::LocalTrack {
+        uri: track.uri.clone(),
+        title: track.name.clone(),
+        artists: track.artists.clone(),
+        album: track
+            .album
+            .as_ref()
+            .map(|album| album.name.clone())
+            .unwrap_or_default(),
+        art_url: track.image(640).map(str::to_string),
+        art_small_url: track.image(64).map(str::to_string),
+        duration_ms: track.duration_ms,
+        is_episode: false,
     }
 }
 
@@ -1741,6 +1768,9 @@ struct Worker {
     youtube_mode: bool,
     /// The native YouTube resolver behind YouTube-mode search.
     yt_search: Option<Arc<crate::yt_resolver::NativeResolver>>,
+    /// The rows YouTube searches answered, by `yt:` URI, so a play of one
+    /// can be handed its metadata back without another lookup.
+    yt_tracks: HashMap<String, crate::api::models::Track>,
     /// The plan, once the Web API has answered.
     premium: Option<bool>,
     cancel_signin: Option<watch::Sender<bool>>,
@@ -1824,6 +1854,7 @@ impl Worker {
             signed_in: false,
             youtube_mode: false,
             yt_search: None,
+            yt_tracks: HashMap::new(),
             premium: None,
             cancel_signin: None,
             authorizing_source: None,
@@ -2146,6 +2177,28 @@ impl Worker {
                     }
                 }
                 Command::Api(ApiRequest::Search { query, serial }) => self.search(query, serial),
+                Command::Api(ApiRequest::PlaySearch {
+                    kind,
+                    query,
+                    serial,
+                }) => {
+                    if self.youtube_mode {
+                        self.play_search_youtube(query, serial);
+                    } else {
+                        self.dispatch(ApiRequest::PlaySearch {
+                            kind,
+                            query,
+                            serial,
+                        });
+                    }
+                }
+                Command::Api(ApiRequest::Track { id }) => {
+                    if self.youtube_mode {
+                        self.track_youtube(id);
+                    } else {
+                        self.dispatch(ApiRequest::Track { id });
+                    }
+                }
                 Command::Api(request) => {
                     self.dispatch(request);
                 }
@@ -2306,6 +2359,12 @@ impl Worker {
                     }
                 }
                 Command::YouTubeMode => self.enter_youtube_mode(),
+                Command::YtSearchDone {
+                    query,
+                    serial,
+                    play,
+                    result,
+                } => self.yt_search_done(query, serial, play, result),
                 Command::NetworkStatus(reachable) => {
                     self.network_reachable = reachable;
                     self.emit(Event::NetworkStatus(reachable));
@@ -4425,28 +4484,119 @@ impl Worker {
             serial,
             split: false,
         })));
-        let events = self.events.clone();
-        let waker = self.waker.clone();
-        let resolver = self.yt_search.clone();
-        let task = tokio::spawn(async move {
-            let result = match resolver {
-                Some(resolver) => resolver
-                    .search_music(&query)
-                    .await
-                    .map(youtube_results)
-                    .map_err(|error| ApiError::Network(format!("{error:#}"))),
-                None => Err(ApiError::Network(
-                    "the YouTube search client is not available".into(),
-                )),
+        self.spawn_yt_search(query, serial, false);
+    }
+
+    /// A YouTube-mode play-search: the best match's `yt:` URI goes back,
+    /// and every result is remembered so the play is handed its metadata.
+    fn play_search_youtube(&mut self, query: String, serial: u64) {
+        self.spawn_yt_search(query, serial, true);
+    }
+
+    fn spawn_yt_search(&mut self, query: String, serial: u64, play: bool) {
+        let Some(resolver) = self.yt_search.clone() else {
+            let error = ApiError::Network("the YouTube search client is not available".into());
+            let response = if play {
+                ApiResponse::PlaySearch {
+                    query,
+                    serial,
+                    result: Err(error),
+                }
+            } else {
+                ApiResponse::Search {
+                    query,
+                    serial,
+                    result: Err(error),
+                }
             };
-            let _ = events.send(Event::Api(Box::new(ApiResponse::Search {
+            self.emit(Event::Api(Box::new(response)));
+            return;
+        };
+        log::info!("YouTube: searching \u{201c}{query}\u{201d}");
+        let commands = self.commands.clone();
+        let task = tokio::spawn(async move {
+            let result = resolver
+                .search_music(&query)
+                .await
+                .map_err(|error| format!("{error:#}"));
+            let _ = commands.send(Command::YtSearchDone {
                 query,
                 serial,
+                play,
                 result,
-            })));
-            waker.wake();
+            });
         });
         self.search_tasks.push(task.abort_handle());
+    }
+
+    /// A YouTube search answered: the rows are remembered for their plays,
+    /// and the Search or PlaySearch answer goes out.
+    fn yt_search_done(
+        &mut self,
+        query: String,
+        serial: u64,
+        play: bool,
+        result: Result<Vec<crate::yt_resolver::YtTrack>, String>,
+    ) {
+        let result = match result {
+            Ok(tracks) => {
+                log::info!(
+                    "YouTube: \u{201c}{query}\u{201d} answered {} results",
+                    tracks.len()
+                );
+                for track in &tracks {
+                    let row = youtube_row(track.clone());
+                    if let Some(engine) = &self.yt {
+                        // The engine may be asked to play any of these rows
+                        // with none of the app's lists holding them (the
+                        // command line's play-search, for one); it is given
+                        // the metadata up front.
+                        let _ = engine.command(crate::player::PlayerCommand::SetTrackMetadata {
+                            uri: row.uri.clone(),
+                            track: local_track_of_row(&row),
+                        });
+                    }
+                    self.yt_tracks.insert(row.uri.clone(), row);
+                }
+                Ok(tracks)
+            }
+            Err(error) => {
+                log::warn!("YouTube: the search for \u{201c}{query}\u{201d} failed ({error})");
+                Err(ApiError::Network(error))
+            }
+        };
+        let response = if play {
+            ApiResponse::PlaySearch {
+                query,
+                serial,
+                result: result.map(|tracks| {
+                    // The song the query names: an official audio match
+                    // when one is there, otherwise the first result.
+                    tracks
+                        .iter()
+                        .position(|track| track.official_audio)
+                        .or((!tracks.is_empty()).then_some(0))
+                        .map(|index| format!("yt:{}", tracks[index].video_id))
+                }),
+            }
+        } else {
+            ApiResponse::Search {
+                query,
+                serial,
+                result: result.map(youtube_results),
+            }
+        };
+        self.emit(Event::Api(Box::new(response)));
+    }
+
+    /// The metadata of a YouTube row the interface plays without having
+    /// drawn it: answered from the searches that named it.
+    fn track_youtube(&self, id: String) {
+        let uri = format!("yt:{id}");
+        let result = self.yt_tracks.get(&uri).cloned().ok_or_else(|| {
+            ApiError::Network("this YouTube row is not known to this session".into())
+        });
+        self.emit(Event::Api(Box::new(ApiResponse::Track { id, result })));
     }
 
     /// Cancel requests on sign-out and report completion under their original generation.

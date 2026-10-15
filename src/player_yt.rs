@@ -284,9 +284,13 @@ impl Entry {
         }
     }
 
-    /// Whether yt-dlp has something to search for.
+    /// Whether the engine can play this row at all. A stored YouTube track
+    /// names its video directly, so it plays even before its metadata
+    /// arrives; anything else needs a searchable title first, and an
+    /// episode cannot play through YouTube yet.
     fn resolvable(&self) -> bool {
-        !self.waiting_for_metadata && !self.uri.starts_with("spotify:episode:")
+        self.uri.starts_with("yt:")
+            || (!self.waiting_for_metadata && !self.uri.starts_with("spotify:episode:"))
     }
 }
 

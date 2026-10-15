@@ -1153,6 +1153,13 @@ impl App {
             });
             app.yt_playback = true;
             app.backend.youtube_mode();
+            // The remembered Spotify playback state cannot materialize on
+            // YouTube: its contexts have no rows here and nothing refills
+            // them from Spotify. Start clean.
+            app.resume_context = None;
+            app.resume_track = None;
+            app.resume_position_ms = 0;
+            app.resume_queue.clear();
         }
         app.local.volume = app.settings.volume;
         // What was played here is on disk and needs nothing from the
@@ -4511,6 +4518,12 @@ impl App {
         if !self.is_connected() {
             return;
         }
+        if self.youtube_mode {
+            // YouTube mode loads no Spotify page: search and the engine
+            // stand on their own, and the library arrives with the app's
+            // own store.
+            return;
+        }
         match page {
             Page::Home => {
                 if self.network_reachable {
@@ -4814,6 +4827,16 @@ impl App {
     }
 
     pub fn load_more(&mut self, page: Page) {
+        if self.youtube_mode
+            && matches!(
+                page,
+                Page::LikedSongs | Page::Albums | Page::Artists | Page::Podcasts | Page::Episodes
+            )
+        {
+            // The library pages arrive with the app's own store; nothing
+            // here asks Spotify in YouTube mode.
+            return;
+        }
         if !self.network_reachable {
             if matches!(page, Page::LikedSongs) && !self.liked_songs.cache_checked {
                 self.ensure_liked_songs();
@@ -7131,14 +7154,22 @@ impl App {
                 }
                 match result {
                     Ok(Some(uri)) => self.actions.push(Action::PlaySearchMatch { uri, serial }),
-                    Ok(None) => self.toast(
-                        gettext(
+                    Ok(None) => {
+                        let message = gettext(
                             self.locale,
                             // Translators: {query} is the words someone searched for.
                             "Nothing on Spotify matches \u{201c}{query}\u{201d}",
                         )
-                        .replace("{query}", &query),
-                    ),
+                        .replace("{query}", &query);
+                        // The brand the search really asked: the one string
+                        // serves both modes, and the name follows the mode.
+                        let message = if self.youtube_mode {
+                            message.replace("Spotify", "YouTube")
+                        } else {
+                            message
+                        };
+                        self.toast(message);
+                    }
                     Err(error) => self.toast_error(
                         gettext(
                             self.locale,
