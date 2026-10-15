@@ -68,6 +68,28 @@ pub fn visualiser_fps(budget: Budget, conditions: Conditions, fps: u32) -> Optio
     }
 }
 
+/// The visualizers' rate while the app has sat unattended: no more than
+/// this, whatever dial is chosen, so a song playing into an idle window
+/// cannot hold the GPU at the chosen rate.
+pub const VISUALISER_IDLE_FPS: u32 = 15;
+
+/// Caps a visualizer rate while the user is idle. `None` stays `None`, a
+/// rate already under the idle one is kept, and the uncapped rate (0) is
+/// capped like any other.
+pub fn visualiser_idle_fps(fps: Option<u32>, idle: bool) -> Option<u32> {
+    if idle {
+        fps.map(|fps| {
+            if fps == 0 {
+                VISUALISER_IDLE_FPS
+            } else {
+                fps.min(VISUALISER_IDLE_FPS)
+            }
+        })
+    } else {
+        fps
+    }
+}
+
 /// Whether local playback is doing work the user is waiting for, which
 /// macOS must not slow down with App Nap while another app is in front:
 /// playing or loading on a connected engine. Pause, stop, an output error
@@ -109,6 +131,20 @@ mod tests {
         assert_eq!(visualiser_fps(Budget::Saver, saving, 30), Some(15));
         assert_eq!(visualiser_fps(Budget::Background, normal, 60), None);
         assert_eq!(visualiser_fps(Budget::Background, normal, 0), None);
+    }
+
+    /// An unattended app walks every visualizer rate down to the idle one:
+    /// the chosen dial cannot keep an idle GPU busy.
+    #[test]
+    fn an_idle_app_walks_the_visualizer_rate_down() {
+        assert_eq!(visualiser_idle_fps(Some(60), true), Some(15));
+        assert_eq!(visualiser_idle_fps(Some(144), true), Some(15));
+        assert_eq!(visualiser_idle_fps(Some(0), true), Some(15), "uncapped");
+        assert_eq!(visualiser_idle_fps(Some(8), true), Some(8), "already lower");
+        assert_eq!(visualiser_idle_fps(None, true), None, "nothing is drawn");
+        assert_eq!(visualiser_idle_fps(Some(60), false), Some(60));
+        assert_eq!(visualiser_idle_fps(Some(0), false), Some(0));
+        assert_eq!(visualiser_idle_fps(None, false), None);
     }
 
     #[test]

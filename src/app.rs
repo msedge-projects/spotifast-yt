@@ -459,6 +459,9 @@ pub struct App {
     pub table_rows: HashMap<Page, TableRowsCache>,
     page_used: HashMap<Page, Instant>,
     track_used: HashMap<String, Instant>,
+    /// When user input last arrived; the visualizers walk their rate down
+    /// once the app has sat unattended with something playing.
+    last_input: Instant,
 
     pub history: Vec<Page>,
     pub history_index: usize,
@@ -989,6 +992,7 @@ impl App {
             table_rows: HashMap::new(),
             page_used: HashMap::new(),
             track_used: HashMap::new(),
+            last_input: Instant::now(),
             history: vec![first_page],
             history_index: 0,
             saved: HashMap::new(),
@@ -3447,13 +3451,31 @@ impl App {
 
     /// How many frames a second the player bar's and mini player's
     /// visualizers draw now, from the user's rate and the power budget;
-    /// `None` draws none.
+    /// `None` draws none. Once the app has sat unattended for a while the
+    /// rate walks down to the idle one, so a playing window nobody touches
+    /// cannot hold the GPU at the chosen rate.
     pub fn visualiser_fps(&self) -> Option<u32> {
-        crate::power::visualiser_fps(
+        let fps = crate::power::visualiser_fps(
             self.budget,
             self.power.conditions(),
             self.settings.visualizer_fps,
-        )
+        );
+        crate::power::visualiser_idle_fps(fps, self.input_idle())
+    }
+
+    /// How long without input before the visualizers walk their rate down.
+    const INPUT_IDLE_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
+
+    /// Records that the user did something; the visualizers keep their
+    /// chosen rate while it stays fresh.
+    pub fn note_input(&mut self) {
+        self.last_input = Instant::now();
+    }
+
+    /// Whether user input has been absent long enough for the visualizers
+    /// to walk their rate down.
+    fn input_idle(&self) -> bool {
+        self.last_input.elapsed() >= Self::INPUT_IDLE_AFTER
     }
 
     /// The screen rate the visualizers' frame-rate dial offers: the one

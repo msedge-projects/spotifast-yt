@@ -1260,6 +1260,11 @@ impl Shell {
         }
         self.read_screen_hz(ctx, frame);
         let app = &mut *self.app;
+        // Any input keeps the visualizers at the chosen rate; their idle
+        // walk-down lives in App::visualiser_fps.
+        if ctx.input(|i| !i.events.is_empty()) {
+            app.note_input();
+        }
         #[cfg(target_os = "macos")]
         for command in musify::mac_menu::drain_commands() {
             use musify::mac_menu::MenuCommand;
