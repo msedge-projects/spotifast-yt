@@ -1160,6 +1160,28 @@ impl App {
             app.resume_track = None;
             app.resume_position_ms = 0;
             app.resume_queue.clear();
+            // The library pages show the app's own store; until it fills,
+            // they are empty and complete, never loading and never asking
+            // Spotify.
+            app.liked_songs.cache_checked = true;
+            app.recents.loaded_once = true;
+            app.recents.complete = true;
+            app.library.playlists = Loadable::Loaded(Vec::new());
+            app.library.liked.loaded_once = true;
+            app.library.liked.complete = true;
+            app.library.liked.loading = false;
+            app.library.albums.loaded_once = true;
+            app.library.albums.complete = true;
+            app.library.albums.loading = false;
+            app.library.artists.loaded_once = true;
+            app.library.artists.complete = true;
+            app.library.artists.loading = false;
+            app.library.shows.loaded_once = true;
+            app.library.shows.complete = true;
+            app.library.shows.loading = false;
+            app.library.episodes.loaded_once = true;
+            app.library.episodes.complete = true;
+            app.library.episodes.loading = false;
         }
         app.local.volume = app.settings.volume;
         // What was played here is on disk and needs nothing from the
@@ -2412,7 +2434,7 @@ impl App {
     }
 
     fn on_network_restored(&mut self) {
-        if !self.is_connected() {
+        if !self.is_connected() || self.youtube_mode {
             return;
         }
         if self.library.playlists.needs_load()
@@ -4252,6 +4274,12 @@ impl App {
     /// the new one is whole. A load already on its way is replaced, not
     /// joined: whatever asked again did so after something changed.
     fn load_playlists(&mut self) {
+        if self.youtube_mode {
+            // Playlists come from the app's own store in YouTube mode;
+            // Spotify is not asked.
+            self.library.playlists = Loadable::Loaded(Vec::new());
+            return;
+        }
         // Nothing is asked for offline: the list loads once the network is
         // back.
         if !self.network_reachable {
@@ -4680,6 +4708,11 @@ impl App {
 
     /// Starts a new Home refresh while preserving cards already on screen.
     fn load_home(&mut self, force: bool) {
+        if self.youtube_mode {
+            // Home reads Spotify's shelves; YouTube mode leaves them unasked
+            // and the page draws what it holds, which is nothing yet.
+            return;
+        }
         if self.home.requested
             && !force
             && self
@@ -4791,6 +4824,10 @@ impl App {
     }
 
     pub fn load_recents(&mut self, force: bool) {
+        if self.youtube_mode {
+            // Nothing is remembered from Spotify in YouTube mode.
+            return;
+        }
         if !self.network_reachable || self.recents.loading {
             return;
         }
@@ -11913,6 +11950,11 @@ impl App {
 
 impl App {
     fn ensure_liked_songs(&mut self) {
+        if self.youtube_mode {
+            // Liked songs come from the app's own store in YouTube mode;
+            // Spotify is not asked.
+            return;
+        }
         if self.liked_songs.cache_loading || self.liked_songs.refreshing() {
             return;
         }
@@ -11979,6 +12021,11 @@ impl App {
     }
 
     fn refresh_liked_songs(&mut self) {
+        if self.youtube_mode {
+            // Liked songs come from the app's own store in YouTube mode;
+            // Spotify is not asked.
+            return;
+        }
         if !self.liked_songs.cache_checked {
             self.ensure_liked_songs();
             return;
