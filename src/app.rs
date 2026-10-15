@@ -3085,10 +3085,23 @@ impl App {
         if now.local
             && !now.is_episode
             && let Some(id) = &now.id
-            && !self.track_cache.contains_key(id)
-            && self.track_requests.insert(id.clone())
         {
-            self.backend.api(ApiRequest::Track { id: id.clone() });
+            if self.yt_playback && self.local_ready && now.title.is_empty() {
+                // The YouTube engine parked this row waiting for the
+                // song's metadata (it has no Spotify lookup of its own).
+                // Answer from the cache when it is known, otherwise ask
+                // Spotify for the track.
+                if let Some(track) = self.track_cache.get(id).cloned() {
+                    self.backend.player(PlayerCommand::SetTrackMetadata {
+                        uri: now.uri.clone(),
+                        track: local_track_of(&track),
+                    });
+                } else if self.track_requests.insert(id.clone()) {
+                    self.backend.api(ApiRequest::Track { id: id.clone() });
+                }
+            } else if !self.track_cache.contains_key(id) && self.track_requests.insert(id.clone()) {
+                self.backend.api(ApiRequest::Track { id: id.clone() });
+            }
         }
         self.request_contains(vec![now.uri.clone()]);
         if let Some(url) = now.art_small.or(now.art_url) {
@@ -7909,6 +7922,11 @@ impl App {
                 }
             } else if let Some(rows) = self.context_track_uris(context) {
                 uris = rows;
+            } else if let Some(uri) = &request.offset_uri {
+                // The context's rows are not loaded (resuming a playlist
+                // from a fresh start, say). The named row still plays;
+                // the rest of the context is not known.
+                uris = vec![uri.clone()];
             }
         }
         let tracks = uris.iter().map(|uri| self.local_track_for(uri)).collect();
@@ -25765,6 +25783,62 @@ mod tests {
         assert_eq!(single.uris, ["spotify:track:a"]);
         assert_eq!(single.tracks.len(), 1);
         assert_eq!(single.tracks[0].title, "Song");
+
+        // A context whose rows are not loaded still plays the named row:
+        // resuming a playlist from a fresh start must not error out.
+        let resumed = app.yt_load(
+            &PlayRequest::context("spotify:playlist:unloaded").starting_at_uri("spotify:track:a"),
+            false,
+        );
+        assert_eq!(resumed.uris, ["spotify:track:a"]);
+        assert_eq!(resumed.offset_uri.as_deref(), Some("spotify:track:a"));
+        assert_eq!(resumed.tracks[0].title, "Song");
+    }
+
+    /// The YouTube engine parks a row it has no metadata for; when the app
+    /// knows the song, it answers from its cache instead of asking Spotify
+    /// again (a cached answer is exactly the case a fetch-only rule missed).
+    #[test]
+    fn a_parked_youtube_row_is_answered_from_the_cache() {
+        use crate::api::models::Track as ApiTrack;
+
+        let mut app = headless_app();
+        app.yt_playback = true;
+        app.local_ready = true;
+        let uri = "spotify:track:parked";
+        app.track_cache.insert(
+            "parked".into(),
+            ApiTrack {
+                id: Some("parked".into()),
+                uri: uri.into(),
+                name: "Parked Song".into(),
+                duration_ms: 1_000,
+                ..Default::default()
+            },
+        );
+        app.local = LocalState::default();
+        // The engine's parked state arrives as a track change: the app
+        // shows no track, the state carries the title-less placeholder.
+        let parked = LocalState {
+            playback: Playback::Playing,
+            track: Some(LocalTrack {
+                uri: uri.into(),
+                ..LocalTrack::default()
+            }),
+            track_sequence: 1,
+            connected: true,
+            ..LocalState::default()
+        };
+        app.handle_local(parked);
+        let commands = app.backend.take_player_commands();
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                PlayerCommand::SetTrackMetadata { uri: answer, track }
+                    if answer == uri && track.title == "Parked Song"
+            )),
+            "the cached song must answer the parked row: {commands:?}"
+        );
     }
 
     /// One song plays as a context of its own, so librespot's autoplay

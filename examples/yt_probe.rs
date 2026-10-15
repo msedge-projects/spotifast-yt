@@ -31,7 +31,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use musify::player::{
-    EngineConfig, EngineEvent, LoadSpec, LocalState, LocalTrack, Playback, PlayerCommand,
+    EngineConfig, EngineEvent, LoadSpec, LocalState, LocalTrack, Playback, PlaybackResume,
+    PlayerCommand,
 };
 use musify::player_yt::YtEngine;
 use musify::settings::ProxyConfig;
@@ -72,6 +73,22 @@ fn wait_for(
         "timed out waiting for {what}; last state: {:?}",
         last.map(|state| (state.playback, state.track.map(|track| track.title)))
     );
+}
+
+/// Checks the resume point of a playing engine: the backend hands it to a
+/// replacement engine, and it must carry the song's metadata, or the
+/// replacement parks the row and the app never answers for a cached song.
+fn some_resume_metadata(engine: &YtEngine) -> Result<()> {
+    let Some(PlaybackResume::Track(spec)) = engine.resume_point() else {
+        bail!("a playing engine has no resume point");
+    };
+    let Some(track) = spec.tracks.first() else {
+        bail!("the resume point carries no metadata");
+    };
+    if track.title.is_empty() {
+        bail!("the resume point's metadata has no title");
+    }
+    Ok(())
 }
 
 fn probe_track(uri: &str, title: String) -> LocalTrack {
@@ -132,11 +149,16 @@ fn main() -> Result<()> {
         play: true,
         ..LoadSpec::default()
     }))?;
-    wait_for(&events, wait, "the first song to play", |state| {
+    let playing_a = wait_for(&events, wait, "the first song to play", |state| {
         state.playback == Playback::Playing
             && state.track.as_ref().is_some_and(|track| track.uri == a.uri)
     })?;
     println!("A is playing");
+
+    // The playing song's metadata must survive an engine replacement:
+    // the resume point is what the backend hands the next engine.
+    some_resume_metadata(&engine)?;
+    println!("the resume point carries the playing song's metadata");
 
     engine.command(PlayerCommand::Seek(1_000))?;
     wait_for(
@@ -171,10 +193,45 @@ fn main() -> Result<()> {
             "the first song to end and B to start",
             |state| {
                 state.playback == Playback::Playing
+                    && !state.loading
                     && state.track.as_ref().is_some_and(|track| track.uri == b.uri)
             },
         )?;
         println!("the end of A advanced to B");
+
+        // Within three seconds of the start, Previous goes back to the
+        // song before; A is alone before B, so it is A again.
+        engine.command(PlayerCommand::Previous)?;
+        let back_on_a = wait_for(&events, wait, "Previous to go back to A", |state| {
+            state.playback == Playback::Playing
+                && !state.loading
+                && state.track.as_ref().is_some_and(|track| track.uri == a.uri)
+                && state.track_sequence > playing_a.track_sequence
+        })?;
+        println!("Previous went back to A");
+
+        // Repeat-track: the song plays again on its own end.
+        engine.command(PlayerCommand::Repeat(musify::player::RepeatMode::Track))?;
+        engine.command(PlayerCommand::Seek(5_500))?;
+        wait_for(&events, wait, "track repeat to replay A", |state| {
+            state.playback == Playback::Playing
+                && !state.loading
+                && state.track.as_ref().is_some_and(|track| track.uri == a.uri)
+                && state.track_sequence > back_on_a.track_sequence
+        })?;
+        println!("repeat-track replayed A");
+
+        // Repeat-context: the list wraps back to its first song.
+        engine.command(PlayerCommand::Repeat(musify::player::RepeatMode::Off))?;
+        engine.command(PlayerCommand::Repeat(musify::player::RepeatMode::Context))?;
+        engine.command(PlayerCommand::Seek(5_500))?;
+        wait_for(&events, wait, "repeat-context to wrap to B", |state| {
+            state.playback == Playback::Playing
+                && !state.loading
+                && state.track.as_ref().is_some_and(|track| track.uri == b.uri)
+        })?;
+        engine.command(PlayerCommand::Repeat(musify::player::RepeatMode::Off))?;
+        println!("repeat-context wrapped the list");
     }
 
     engine.command(PlayerCommand::AddToQueue {

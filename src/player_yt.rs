@@ -201,14 +201,25 @@ impl YtEngine {
     }
 
     pub fn resume_point(&self) -> Option<PlaybackResume> {
-        self.interrupted().map(|interrupted| {
-            PlaybackResume::Track(LoadSpec {
-                uris: vec![interrupted.uri],
-                position_ms: interrupted.position_ms,
-                play: interrupted.playing,
-                ..LoadSpec::default()
-            })
-        })
+        let interrupted = self.interrupted()?;
+        // The engine forgets its queue when it is replaced, but the
+        // playing song's metadata is still in the state. Carrying it lets
+        // the replacement start the song without another lookup (and
+        // without the app having to answer for a cached row).
+        let track = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .track
+            .clone()
+            .filter(|track| track.uri == interrupted.uri && !track.title.is_empty());
+        Some(PlaybackResume::Track(LoadSpec {
+            uris: vec![interrupted.uri],
+            tracks: track.into_iter().collect(),
+            position_ms: interrupted.position_ms,
+            play: interrupted.playing,
+            ..LoadSpec::default()
+        }))
     }
 
     pub fn resume(&self, resume: PlaybackResume) -> Result<()> {
@@ -644,6 +655,9 @@ impl Actor {
     fn stop_at_end(&mut self) {
         self.current = None;
         self.loaded = false;
+        // Anything still resolving for the song that just left is not to
+        // be played any more.
+        self.play_id = self.play_id.wrapping_add(1);
         let mut state = self
             .state
             .lock()
@@ -814,6 +828,11 @@ impl Actor {
     }
 
     fn fail(&mut self, message: &str) {
+        // The song that failed is not what is heard any more: mpv must
+        // not keep playing whatever it had while the state reports the
+        // failure.
+        self.loaded = false;
+        self.send(json!(["stop"]));
         let mut state = self
             .state
             .lock()
@@ -902,10 +921,18 @@ fn find_tool(name: &str) -> Option<PathBuf> {
     {
         let local = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
         if name == "mpv" {
-            for candidate in [
+            let mut candidates = vec![
                 local.join("Programs").join("mpv").join(&exe),
                 local.join("mpv").join(&exe),
-            ] {
+            ];
+            // Installers and package managers put mpv under Program Files
+            // too; a PATH entry usually covers them, but not always.
+            for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+                if let Some(directory) = std::env::var_os(variable) {
+                    candidates.push(PathBuf::from(directory).join("mpv").join(&exe));
+                }
+            }
+            for candidate in candidates {
                 if candidate.is_file() {
                     return Some(candidate);
                 }

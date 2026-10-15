@@ -38,11 +38,11 @@ A personal fork of Spotifast (native Rust Spotify client, egui UI), renamed to *
   the queue panel is built from app state (the user's rows, then the rest
   of the context); Spotify's queue endpoint is not polled for it.
 - Verified locally (Linux, `--no-default-features`): the full test suite
-  (1185 lib tests plus the integration suites), `--all-features` clippy and
+  (1186 lib tests plus the integration suites), `--all-features` clippy and
   rustdoc with `-D warnings`, and `examples/yt_probe.rs` end to end with a
   stub yt-dlp and mpv 0.37 (connect, resolve, play, seek, volume,
-  pause/resume, end-of-track advance, queued Next, deferred
-  `SetTrackMetadata`).
+  pause/resume, Previous, end-of-track advance, repeat-track, repeat-context,
+  queued Next, deferred `SetTrackMetadata`, resume-point metadata).
 - The Windows artifact builds green, carries the red icon at every size
   (verified inside the exe), and imports no MSVC runtime. The artifact of
   record is the `build` run on the final green `main` commit.
