@@ -680,6 +680,7 @@ pub(crate) fn run() -> eframe::Result<()> {
                 Ok(Box::new(Shell {
                     app,
                     recovery_checked: false,
+                    geometry_checked: false,
                     #[cfg(windows)]
                     thumbbar,
                     #[cfg(feature = "demo")]
@@ -1212,6 +1213,8 @@ struct Shell {
     app: fastframe_shell::Held<app::App>,
     /// Whether this window's first frame checked that a monitor shows it.
     recovery_checked: bool,
+    /// Whether this window's first frame restored the saved window state.
+    geometry_checked: bool,
     #[cfg(windows)]
     thumbbar: musify::thumbbar::ThumbBar,
     /// A pending `--demo-shot` capture, if this is a screenshot run.
@@ -1257,6 +1260,15 @@ impl Shell {
         // unplugged since) comes back onto one.
         if !std::mem::replace(&mut self.recovery_checked, true) {
             fastframe_shell::window::recover_offscreen(ctx, frame);
+        }
+        if !std::mem::replace(&mut self.geometry_checked, true)
+            && !self.app.window_geometry.maximized
+        {
+            // The desktop shell can hand a window back maximized from its
+            // own memory (a taskbar launch carries that state); the saved
+            // geometry has the last word, so a window left normal comes
+            // back normal.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
         }
         self.read_screen_hz(ctx, frame);
         let app = &mut *self.app;
