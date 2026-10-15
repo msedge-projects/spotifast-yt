@@ -1770,7 +1770,7 @@ struct Worker {
     yt_search: Option<Arc<crate::yt_resolver::NativeResolver>>,
     /// The rows YouTube searches answered, by `yt:` URI, so a play of one
     /// can be handed its metadata back without another lookup.
-    yt_tracks: HashMap<String, crate::api::models::Track>,
+    yt_tracks: std::collections::HashMap<String, crate::api::models::Track>,
     /// The plan, once the Web API has answered.
     premium: Option<bool>,
     cancel_signin: Option<watch::Sender<bool>>,
@@ -1854,7 +1854,7 @@ impl Worker {
             signed_in: false,
             youtube_mode: false,
             yt_search: None,
-            yt_tracks: HashMap::new(),
+            yt_tracks: std::collections::HashMap::new(),
             premium: None,
             cancel_signin: None,
             authorizing_source: None,
