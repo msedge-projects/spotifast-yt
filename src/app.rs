@@ -2937,16 +2937,10 @@ impl App {
         true
     }
 
-    /// Caches track details from a loaded context for immediate display.
-    fn cache_track_from_context(&mut self, context_uri: &str, uri: &str) {
-        let Some(id) = util::uri_id(uri) else {
-            return;
-        };
-        if self.track_cache.contains_key(id) {
-            self.track_used.insert(id.to_owned(), Instant::now());
-            return;
-        }
-        let found = if let Some(pid) = context_uri.strip_prefix("spotify:playlist:") {
+    /// A row of a loaded context page, by URI. The page carries the
+    /// metadata the engine or the cache needs, with no further request.
+    fn context_page_track(&self, context_uri: &str, uri: &str) -> Option<Track> {
+        if let Some(pid) = context_uri.strip_prefix("spotify:playlist:") {
             self.playlist_pages.get(pid).and_then(|page| {
                 page.items
                     .items
@@ -2973,8 +2967,19 @@ impl App {
                 .map(|item| item.track.clone())
         } else {
             None
+        }
+    }
+
+    /// Caches track details from a loaded context for immediate display.
+    fn cache_track_from_context(&mut self, context_uri: &str, uri: &str) {
+        let Some(id) = util::uri_id(uri) else {
+            return;
         };
-        if let Some(track) = found {
+        if self.track_cache.contains_key(id) {
+            self.track_used.insert(id.to_owned(), Instant::now());
+            return;
+        }
+        if let Some(track) = self.context_page_track(context_uri, uri) {
             self.remember_track_recording(&track);
             self.track_cache.insert(id.to_owned(), track);
             self.track_used.insert(id.to_owned(), Instant::now());
@@ -7934,7 +7939,10 @@ impl App {
                 uris = vec![uri.clone()];
             }
         }
-        let tracks = uris.iter().map(|uri| self.local_track_for(uri)).collect();
+        let tracks = uris
+            .iter()
+            .map(|uri| self.local_track_for_context(request.context_uri.as_deref(), uri))
+            .collect();
         LoadSpec {
             context_uri: None,
             uris,
@@ -7959,6 +7967,21 @@ impl App {
             uri: uri.to_string(),
             ..LocalTrack::default()
         }
+    }
+
+    /// The metadata for a row the engine is about to be told to play: the
+    /// shared cache first, then the loaded context's own rows. Handing the
+    /// engine the rows' metadata up front is what lets it resolve the next
+    /// song while the current one plays, instead of searching at the seam.
+    fn local_track_for_context(&self, context_uri: Option<&str>, uri: &str) -> LocalTrack {
+        let track = self.local_track_for(uri);
+        if !track.title.is_empty() {
+            return track;
+        }
+        context_uri
+            .and_then(|context| self.context_page_track(context, uri))
+            .map(|found| local_track_of(&found))
+            .unwrap_or(track)
     }
 
     /// The metadata for a queue add, when it is cached.
@@ -25834,6 +25857,51 @@ mod tests {
         let context = app.yt_load(&PlayRequest::context("spotify:playlist:pl"), false);
         assert_eq!(context.uris, ["spotify:track:a"]);
         assert_eq!(context.tracks.len(), 1);
+    }
+
+    /// A loaded album page hands the engine every row's metadata up front,
+    /// so the engine can resolve the next song while the current one plays
+    /// instead of searching at the transition.
+    #[test]
+    fn a_loaded_album_hands_the_engine_every_rows_metadata() {
+        use crate::api::models::Track as ApiTrack;
+        use crate::model::{AlbumPage, PagedList};
+
+        let mut app = headless_app();
+        app.album_pages.insert(
+            "al".into(),
+            AlbumPage {
+                tracks: PagedList {
+                    items: vec![
+                        ApiTrack {
+                            id: Some("a".into()),
+                            uri: "spotify:track:a".into(),
+                            name: "Song".into(),
+                            ..Default::default()
+                        },
+                        ApiTrack {
+                            id: Some("b".into()),
+                            uri: "spotify:track:b".into(),
+                            name: "Next Song".into(),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let spec = app.yt_load(&PlayRequest::context("spotify:album:al"), false);
+        assert_eq!(spec.uris, ["spotify:track:a", "spotify:track:b"]);
+        assert!(
+            app.track_cache.is_empty(),
+            "the page answered without the shared cache"
+        );
+        assert_eq!(spec.tracks[0].title, "Song");
+        assert_eq!(
+            spec.tracks[1].title, "Next Song",
+            "the row ahead carries its metadata so the engine can pre-resolve it"
+        );
     }
 
     /// The YouTube engine parks a row it has no metadata for; when the app
