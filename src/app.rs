@@ -1167,21 +1167,13 @@ impl App {
             app.recents.loaded_once = true;
             app.recents.complete = true;
             app.library.playlists = Loadable::Loaded(Vec::new());
-            app.library.liked.loaded_once = true;
-            app.library.liked.complete = true;
-            app.library.liked.loading = false;
-            app.library.albums.loaded_once = true;
-            app.library.albums.complete = true;
-            app.library.albums.loading = false;
+            app.library.liked.restore_cached(Vec::new(), 0, None);
+            app.library.albums.restore_cached(Vec::new(), 0, None);
+            app.library.shows.restore_cached(Vec::new(), 0, None);
+            app.library.episodes.restore_cached(Vec::new(), 0, None);
             app.library.artists.loaded_once = true;
             app.library.artists.complete = true;
             app.library.artists.loading = false;
-            app.library.shows.loaded_once = true;
-            app.library.shows.complete = true;
-            app.library.shows.loading = false;
-            app.library.episodes.loaded_once = true;
-            app.library.episodes.complete = true;
-            app.library.episodes.loading = false;
         }
         app.local.volume = app.settings.volume;
         // What was played here is on disk and needs nothing from the
