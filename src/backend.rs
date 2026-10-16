@@ -1678,6 +1678,22 @@ fn youtube_album_page(
     (!albums.is_empty()).then(|| youtube_page(albums.iter().map(|album| album.to_row()).collect()))
 }
 
+/// One YouTube song as a playlist page row.
+fn playlist_row(track: crate::yt_resolver::YtTrack) -> crate::api::models::PlaylistItem {
+    crate::api::models::PlaylistItem {
+        item: Some(crate::api::models::PlayableItem::Track(youtube_row(track))),
+        ..Default::default()
+    }
+}
+
+/// The playlists of a search as a search page, when there are any.
+fn youtube_playlist_page(
+    playlists: &[crate::yt_resolver::YtPlaylist],
+) -> Option<crate::api::models::Page<crate::api::models::Playlist>> {
+    (!playlists.is_empty())
+        .then(|| youtube_page(playlists.iter().map(|playlist| playlist.to_row()).collect()))
+}
+
 /// The engine's own words for a row YouTube named: handed over with every
 /// search answer so a play and the queue draw the song before any lookup.
 fn local_track_of_row(track: &crate::api::models::Track) -> crate::player::LocalTrack {
@@ -4982,159 +4998,6 @@ impl Worker {
                     && let Some((_, offset, generation)) = self.yt_album_tracks_waiting.take()
                 {
                     self.emit(Event::Api(Box::new(ApiResponse::AlbumTracks {
-                        id,
-                        offset,
-                        generation,
-                        result: Err(ApiError::Network(error)),
-                    })));
-                }
-            }
-        }
-    }
-
-    /// Stores the playlists a search answered, for their pages.
-    fn remember_yt_playlists(&mut self, playlists: &[crate::yt_resolver::YtPlaylist]) {
-        for playlist in playlists {
-            self.yt_playlists
-                .insert(playlist.browse_id.clone(), playlist.clone());
-        }
-    }
-
-    /// A playlist page's own answer: what the searches knew about it, or a
-    /// browse of the playlist's own page.
-    fn playlist_youtube(&mut self, id: String, generation: u64) {
-        if let Some(playlist) = self.yt_playlists.get(&id) {
-            let result = Ok(playlist.to_row());
-            self.emit(Event::Api(Box::new(ApiResponse::Playlist {
-                id,
-                generation,
-                result,
-            })));
-            return;
-        }
-        self.yt_playlist_header_waiting = Some((id.clone(), generation));
-        self.browse_yt_playlist(id);
-    }
-
-    /// A playlist's songs: answered from the browse that read the page,
-    /// with the request's own generation echoed so the page accepts it.
-    fn playlist_items_youtube(&mut self, id: String, offset: u32, generation: u64) {
-        if let Some(rows) = self.yt_playlist_tracks.get(&id) {
-            let result = Ok(youtube_page(rows.clone()));
-            self.emit(Event::Api(Box::new(ApiResponse::PlaylistItems {
-                id,
-                offset,
-                generation,
-                result,
-            })));
-            return;
-        }
-        if offset > 0 {
-            // A playlist's first hundred songs are its page; a later page
-            // is not read here.
-            self.emit(Event::Api(Box::new(ApiResponse::PlaylistItems {
-                id,
-                offset,
-                generation,
-                result: Ok(youtube_page(Vec::new())),
-            })));
-            return;
-        }
-        self.yt_playlist_tracks_waiting = Some((id.clone(), offset, generation));
-        self.browse_yt_playlist(id);
-    }
-
-    /// Asks YouTube for a playlist's own page (header and first songs);
-    /// the rows answer the pending requests when they land.
-    fn browse_yt_playlist(&mut self, id: String) {
-        if !self.yt_playlist_browsing.insert(id.clone()) {
-            return;
-        }
-        let Some(resolver) = self.yt_search.clone() else {
-            self.yt_playlist_browsing.remove(&id);
-            return;
-        };
-        log::info!("YouTube: reading the playlist page {id}");
-        let commands = self.commands.clone();
-        let task = tokio::spawn(async move {
-            let result = resolver
-                .playlist_browse(&id)
-                .await
-                .map_err(|error| format!("{error:#}"));
-            let _ = commands.send(Command::YtPlaylistDone { id, result });
-        });
-        self.search_tasks.push(task.abort_handle());
-    }
-
-    /// A playlist browse answered: stored, handed to the engine, and the
-    /// waiting requests answered.
-    fn yt_playlist_done(
-        &mut self,
-        id: String,
-        result: Result<
-            (
-                crate::yt_resolver::YtPlaylist,
-                Vec<crate::yt_resolver::YtTrack>,
-            ),
-            String,
-        >,
-    ) {
-        self.yt_playlist_browsing.remove(&id);
-        match result {
-            Ok((playlist, tracks)) => {
-                log::info!("YouTube: the playlist page answered {} songs", tracks.len());
-                self.remember_yt_rows(&tracks);
-                let rows: Vec<crate::api::models::PlaylistItem> =
-                    tracks.into_iter().map(playlist_row).collect();
-                self.yt_playlist_tracks.insert(id.clone(), rows.clone());
-                self.yt_playlists.insert(id.clone(), playlist.clone());
-                if self
-                    .yt_playlist_header_waiting
-                    .as_ref()
-                    .is_some_and(|(waiting, _)| *waiting == id)
-                    && let Some((_, generation)) = self.yt_playlist_header_waiting.take()
-                {
-                    self.emit(Event::Api(Box::new(ApiResponse::Playlist {
-                        id: id.clone(),
-                        generation,
-                        result: Ok(playlist.to_row()),
-                    })));
-                }
-                if self
-                    .yt_playlist_tracks_waiting
-                    .as_ref()
-                    .is_some_and(|(waiting, _, _)| *waiting == id)
-                    && let Some((_, offset, generation)) = self.yt_playlist_tracks_waiting.take()
-                {
-                    self.emit(Event::Api(Box::new(ApiResponse::PlaylistItems {
-                        id,
-                        offset,
-                        generation,
-                        result: Ok(youtube_page(rows)),
-                    })));
-                }
-            }
-            Err(error) => {
-                log::warn!("YouTube: the playlist page failed ({error})");
-                if self
-                    .yt_playlist_header_waiting
-                    .as_ref()
-                    .is_some_and(|(waiting, _)| *waiting == id)
-                    && let Some((_, generation)) = self.yt_playlist_header_waiting.take()
-                {
-                    self.emit(Event::Api(Box::new(ApiResponse::Playlist {
-                        id: id.clone(),
-                        generation,
-                        result: Err(ApiError::Network(error.clone())),
-                    })));
-                }
-                if self
-                    .yt_playlist_tracks_waiting
-                    .as_ref()
-                    .is_some_and(|(waiting, _, _)| *waiting == id)
-                    && let Some((_, offset, generation)) = self.yt_playlist_tracks_waiting.take()
-                {
-                    self.emit(Event::Api(Box::new(ApiResponse::PlaylistItems {
                         id,
                         offset,
                         generation,
