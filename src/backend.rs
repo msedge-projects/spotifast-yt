@@ -1626,7 +1626,9 @@ fn youtube_page<T>(items: Vec<T>) -> crate::api::models::Page<T> {
     crate::api::models::Page {
         items,
         total,
-        ..Default::default()
+        limit: total,
+        offset: 0,
+        next: None,
     }
 }
 
