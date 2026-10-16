@@ -7317,6 +7317,7 @@ impl App {
                         Err(error) => Loadable::Failed(friendly_api_error(self.locale, &error)),
                     };
                 }
+                self.replay_queued_context(&format!("spotify:artist:{id}"));
             }
             ApiResponse::ArtistAlbums {
                 id,
@@ -8356,6 +8357,9 @@ impl App {
             true
         } else if let Some(id) = context.strip_prefix("spotify:album:") {
             self.ensure_loaded(Page::Album(id.to_string()));
+            true
+        } else if let Some(id) = context.strip_prefix("spotify:artist:") {
+            self.ensure_loaded(Page::Artist(id.to_string()));
             true
         } else {
             false

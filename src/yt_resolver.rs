@@ -646,33 +646,29 @@ fn music_subtitle(tokens: &[&str]) -> MusicSubtitle {
         }
     }
     segments.push(current);
-    if let Some(first) = segments.first()
-        && first.len() == 1
-        && is_music_kind(first[0])
-    {
-        segments.remove(0);
-    }
-    let artists = segments
-        .first()
-        .map(|segment| segment.concat())
-        .unwrap_or_default();
-    let artists = if music_duration_ms(&artists).is_some() || is_release_year(&artists) {
-        // YouTube omitted the artist; a bare length or year is not its name.
-        String::new()
-    } else {
-        artists
-    };
+    // One pass over the segments: the kind and a year pass through, a
+    // length is the length, the first name is the artists', the next is
+    // the album. A row whose artist YouTube omitted leads with its length,
+    // and a length must never squat in the artist slot nor lose its own.
+    let mut artists = String::new();
     let mut album = String::new();
     let mut duration_ms = 0;
-    for segment in segments.iter().skip(1) {
+    for segment in &segments {
         let text = segment.concat();
         let text = text.trim();
-        if text.is_empty() || text.ends_with("views") {
+        if text.is_empty() || text.ends_with("views") || is_music_kind(text) {
             continue;
         }
         if let Some(ms) = music_duration_ms(text) {
             duration_ms = ms;
-        } else if album.is_empty() && !is_release_year(text) {
+            continue;
+        }
+        if is_release_year(text) {
+            continue;
+        }
+        if artists.is_empty() {
+            artists = text.to_string();
+        } else if album.is_empty() {
             album = text.to_string();
         }
     }
@@ -1210,6 +1206,35 @@ mod tests {
         assert_eq!(items[1].album, "", "a view count is not an album");
         assert_eq!(items[1].duration_ms, 0, "a view count is not a duration");
         assert!(!items[1].official_audio);
+    }
+
+    #[test]
+    fn a_row_whose_artist_is_omitted_still_keeps_its_length() {
+        let response = json!({
+            "contents": { "musicShelfRenderer": { "contents": [
+                { "musicResponsiveListItemRenderer": {
+                    "flexColumns": [
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "Creepin'",
+                              "navigationEndpoint": { "watchEndpoint": { "videoId": "CCCCCCCCCCC" } } }
+                        ] } } },
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "Song" },
+                            { "text": " • " },
+                            { "text": "3:42" }
+                        ] } } }
+                    ]
+                } }
+            ] } } }
+        );
+        let items = music_items(&response);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].artists, "", "a length is not an artist");
+        assert_eq!(items[0].album, "");
+        assert_eq!(
+            items[0].duration_ms, 222_000,
+            "the length is still the length"
+        );
     }
 
     #[test]
