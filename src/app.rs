@@ -1175,6 +1175,7 @@ impl App {
             app.recents.loaded_once = true;
             app.recents.complete = true;
             app.library.playlists = Loadable::Loaded(Vec::new());
+            app.rebuild_local_playlists();
             app.library.liked.restore_cached(Vec::new(), 0, None);
             app.library.albums.restore_cached(Vec::new(), 0, None);
             app.library.shows.restore_cached(Vec::new(), 0, None);
@@ -4600,6 +4601,10 @@ impl App {
                 }
             }
             Page::Playlist(id) => {
+                if self.youtube_mode && self.local_playlist_known(&id) {
+                    self.fill_local_playlist(&id);
+                    return;
+                }
                 let needs_generation = self
                     .playlist_pages
                     .get(&id)
@@ -10324,7 +10329,11 @@ impl App {
                 playlist_name,
                 items,
             } => {
-                self.request_playlist_add(playlist_id, playlist_name, items, None);
+                if self.youtube_mode {
+                    self.add_local_playlist_tracks(&playlist_name, &items);
+                } else {
+                    self.request_playlist_add(playlist_id, playlist_name, items, None);
+                }
             }
             Action::InsertInPlaylist {
                 playlist_id,
@@ -10493,17 +10502,23 @@ impl App {
                 public,
                 add_uris,
             } => {
-                self.playlist_busy = true;
-                self.dialog = Some(Dialog::CreatePlaylist {
-                    name: name.clone(),
-                    public,
-                    add_uris,
-                });
-                self.backend.api(ApiRequest::CreatePlaylist {
-                    name,
-                    public,
-                    description: String::new(),
-                });
+                if self.youtube_mode {
+                    // The dialog collects the name; the store takes it.
+                    self.dialog = None;
+                    self.create_local_playlist(name, add_uris);
+                } else {
+                    self.playlist_busy = true;
+                    self.dialog = Some(Dialog::CreatePlaylist {
+                        name: name.clone(),
+                        public,
+                        add_uris,
+                    });
+                    self.backend.api(ApiRequest::CreatePlaylist {
+                        name,
+                        public,
+                        description: String::new(),
+                    });
+                }
             }
             Action::UpdatePlaylist {
                 id,
@@ -12140,6 +12155,114 @@ impl App {
             let path = self.local_library_path.clone();
             self.files
                 .write(&path, text, fastframe_file::Access::Default);
+        }
+    }
+
+    /// Fills the sidebar's Playlists list, and any open local playlist
+    /// pages, from the app's own store.
+    fn rebuild_local_playlists(&mut self) {
+        let rows: Vec<crate::api::models::Playlist> = self
+            .library_store
+            .playlists
+            .iter()
+            .map(|playlist| crate::api::models::Playlist {
+                id: playlist.name.clone(),
+                name: playlist.name.clone(),
+                uri: format!("spotify:playlist:{}", playlist.name),
+                tracks: Some(crate::api::models::TrackCount {
+                    total: playlist.tracks.len() as u32,
+                }),
+                ..Default::default()
+            })
+            .collect();
+        self.library.playlists = Loadable::Loaded(rows);
+        let open: Vec<String> = self
+            .playlist_pages
+            .keys()
+            .filter(|name| self.local_playlist_known(name))
+            .cloned()
+            .collect();
+        for name in open {
+            self.fill_local_playlist(&name);
+        }
+    }
+
+    /// Whether a name is one of the app's own playlists.
+    fn local_playlist_known(&self, name: &str) -> bool {
+        self.library_store
+            .playlists
+            .iter()
+            .any(|playlist| playlist.name == name)
+    }
+
+    /// One of the app's own playlists as a page: header and rows from the
+    /// store, nothing asked of Spotify.
+    fn fill_local_playlist(&mut self, name: &str) {
+        let Some(stored) = self
+            .library_store
+            .playlists
+            .iter()
+            .find(|playlist| playlist.name == name)
+        else {
+            return;
+        };
+        let rows: Vec<crate::api::models::PlaylistItem> = stored
+            .tracks
+            .iter()
+            .map(|track| crate::api::models::PlaylistItem {
+                item: Some(PlayableItem::Track(track.to_row())),
+                ..Default::default()
+            })
+            .collect();
+        let total = rows.len() as u32;
+        let header = crate::api::models::Playlist {
+            id: name.to_string(),
+            name: name.to_string(),
+            uri: format!("spotify:playlist:{name}"),
+            tracks: Some(crate::api::models::TrackCount { total }),
+            ..Default::default()
+        };
+        let page = self.playlist_pages.entry(name.to_string()).or_default();
+        page.playlist = Loadable::Loaded(header);
+        page.items.restore_cached(rows, total, None);
+    }
+
+    /// Creating a playlist in YouTube mode is the app's own business: the
+    /// store takes it, whatever was queued is added, and the file is
+    /// written.
+    fn create_local_playlist(&mut self, name: String, add_uris: Vec<String>) {
+        if !self.library_store.add_playlist(&name) {
+            return;
+        }
+        for uri in add_uris {
+            if let Some(video_id) = uri.strip_prefix("yt:").map(str::to_string) {
+                let row = self.cached_track_anywhere(&uri);
+                let track = stored_track_of(&video_id, row.as_ref());
+                self.library_store.add_to_playlist(&name, &track);
+            }
+        }
+        self.persist_local_library();
+        self.rebuild_local_playlists();
+    }
+
+    /// Adding to a playlist in YouTube mode goes to the app's own store.
+    fn add_local_playlist_tracks(&mut self, name: &str, items: &[PlayableItem]) {
+        let mut added = false;
+        for item in items {
+            let PlayableItem::Track(track) = item else {
+                continue;
+            };
+            let Some(video_id) = track.uri.strip_prefix("yt:").map(str::to_string) else {
+                continue;
+            };
+            let stored = stored_track_of(&video_id, Some(track));
+            if self.library_store.add_to_playlist(name, &stored) {
+                added = true;
+            }
+        }
+        if added {
+            self.persist_local_library();
+            self.rebuild_local_playlists();
         }
     }
 
