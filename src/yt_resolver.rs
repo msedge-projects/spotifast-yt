@@ -148,12 +148,52 @@ impl YtAlbum {
     }
 }
 
+/// One YouTube Music playlist: enough to draw its card and open its page.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct YtPlaylist {
+    pub browse_id: String,
+    pub name: String,
+    /// The line under the name: its owner or a description.
+    pub owner: String,
+    pub art_url: Option<String>,
+}
+
+impl YtPlaylist {
+    /// The Spotify-shaped playlist the interface draws and opens.
+    pub fn to_row(&self) -> crate::api::models::Playlist {
+        let mut images = Vec::new();
+        if let Some(url) = &self.art_url {
+            images.push(crate::api::models::Image {
+                url: url.clone(),
+                ..Default::default()
+            });
+        }
+        let owner = if self.owner.is_empty() {
+            crate::api::models::Owner::default()
+        } else {
+            crate::api::models::Owner {
+                display_name: Some(self.owner.clone()),
+                ..Default::default()
+            }
+        };
+        crate::api::models::Playlist {
+            id: self.browse_id.clone(),
+            name: self.name.clone(),
+            uri: format!("spotify:playlist:{}", self.browse_id),
+            images,
+            owner,
+            ..Default::default()
+        }
+    }
+}
+
 /// What one YouTube Music search answered.
 #[derive(Clone, Debug, Default)]
 pub struct MusicSearch {
     pub tracks: Vec<YtTrack>,
     pub artists: Vec<YtArtist>,
     pub albums: Vec<YtAlbum>,
+    pub playlists: Vec<YtPlaylist>,
 }
 
 /// The life given to URLs whose own lifetime is not known (the yt-dlp path
@@ -268,7 +308,11 @@ impl NativeResolver {
     /// gates are per request, and the very next ask usually answers.
     pub async fn search_music(&self, query: &str) -> Result<MusicSearch> {
         let found = self.search_music_once(query).await?;
-        if !found.tracks.is_empty() || !found.artists.is_empty() || !found.albums.is_empty() {
+        if !found.tracks.is_empty()
+            || !found.artists.is_empty()
+            || !found.albums.is_empty()
+            || !found.playlists.is_empty()
+        {
             return Ok(found);
         }
         log::info!(
@@ -302,8 +346,13 @@ impl NativeResolver {
             tracks: music_items(&response),
             artists: music_artists(&response),
             albums: music_albums(&response),
+            playlists: music_playlists(&response),
         };
-        if found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty() {
+        if found.tracks.is_empty()
+            && found.artists.is_empty()
+            && found.albums.is_empty()
+            && found.playlists.is_empty()
+        {
             // A gate page parses to nothing; its own keys say which one it
             // was, should this ever become a habit.
             let keys: Vec<&str> = response
@@ -348,6 +397,45 @@ impl NativeResolver {
             .context("the album page was refused")?;
         self.remember_visitor(&response);
         Ok((album_header(browse_id, &response), music_items(&response)))
+    }
+
+    /// One playlist page: its header and its first songs (YouTube answers
+    /// the first hundred rows in one browse). An empty page is asked once
+    /// more, like a search.
+    pub async fn playlist_browse(&self, browse_id: &str) -> Result<(YtPlaylist, Vec<YtTrack>)> {
+        let page = self.playlist_browse_once(browse_id).await?;
+        if !page.0.name.is_empty() || !page.1.is_empty() {
+            return Ok(page);
+        }
+        log::info!("YouTube: the playlist page {browse_id} answered nothing; asking once more");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        self.playlist_browse_once(browse_id).await
+    }
+
+    async fn playlist_browse_once(&self, browse_id: &str) -> Result<(YtPlaylist, Vec<YtTrack>)> {
+        let response = self
+            .post(
+                MUSIC_BROWSE_URL,
+                MUSIC_CLIENT_ID,
+                MUSIC_CLIENT_VERSION,
+                Some("https://music.youtube.com"),
+                &json!({
+                    "context": { "client": {
+                        "clientName": MUSIC_CLIENT_NAME,
+                        "clientVersion": MUSIC_CLIENT_VERSION,
+                        "hl": "en",
+                        "gl": "US",
+                    } },
+                    "browseId": browse_id,
+                }),
+            )
+            .await
+            .context("the playlist page was refused")?;
+        self.remember_visitor(&response);
+        Ok((
+            playlist_header(browse_id, &response),
+            music_items(&response),
+        ))
     }
 
     async fn try_resolve(&self, query: &str) -> Result<Resolved> {
@@ -994,6 +1082,125 @@ fn card_art(renderer: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Every playlist the search response names, from the playlist cards.
+fn music_playlists(response: &Value) -> Vec<YtPlaylist> {
+    let mut playlists = Vec::new();
+    collect_music_playlists(response, &mut playlists);
+    playlists
+}
+
+fn collect_music_playlists(value: &Value, playlists: &mut Vec<YtPlaylist>) {
+    match value {
+        Value::Object(map) => {
+            for key in ["musicCardShelfRenderer", "musicTwoRowItemRenderer"] {
+                if let Some(renderer) = map.get(key)
+                    && let Some(playlist) = music_playlist(renderer)
+                    && !playlists
+                        .iter()
+                        .any(|held| held.browse_id == playlist.browse_id)
+                {
+                    playlists.push(playlist);
+                }
+            }
+            for child in map.values() {
+                collect_music_playlists(child, playlists);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_music_playlists(child, playlists);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// One card's fields when its title links to a playlist page: the name,
+/// the owner or description under it, and the artwork beside them.
+fn music_playlist(renderer: &Value) -> Option<YtPlaylist> {
+    let run = renderer.get("title")?.get("runs")?.as_array()?.first()?;
+    let name = run.get("text")?.as_str()?;
+    let browse = run.get("navigationEndpoint")?.get("browseEndpoint")?;
+    let playlist_page = browse
+        .get("browseEndpointContextSupportedConfigs")
+        .and_then(|configs| configs.get("browseEndpointContextMusicConfig"))
+        .and_then(|config| config.get("pageType"))
+        .and_then(Value::as_str)
+        .is_some_and(|page| page == "MUSIC_PAGE_TYPE_PLAYLIST");
+    if !playlist_page {
+        return None;
+    }
+    let browse_id = browse.get("browseId")?.as_str()?;
+    let owner = card_texts(renderer)
+        .first()
+        .map(|text| (*text).to_string())
+        .unwrap_or_default();
+    Some(YtPlaylist {
+        browse_id: browse_id.to_string(),
+        name: name.to_string(),
+        owner,
+        art_url: card_art(renderer),
+    })
+}
+
+/// A playlist page's header: the title, its owner or description, and the
+/// artwork the browse response draws with.
+fn playlist_header(browse_id: &str, response: &Value) -> YtPlaylist {
+    let mut header = None;
+    find_header(response, &mut header);
+    let mut playlist = YtPlaylist {
+        browse_id: browse_id.to_string(),
+        name: String::new(),
+        owner: String::new(),
+        art_url: None,
+    };
+    let Some(header) = header else {
+        return playlist;
+    };
+    playlist.name = header
+        .get("title")
+        .and_then(|title| {
+            title
+                .get("runs")
+                .and_then(Value::as_array)
+                .and_then(|runs| runs.first())
+                .and_then(|run| run.get("text"))
+                .and_then(Value::as_str)
+                .or_else(|| title.get("text").and_then(Value::as_str))
+        })
+        .unwrap_or_default()
+        .to_string();
+    playlist.owner = header
+        .get("subtitle")
+        .and_then(|subtitle| subtitle.get("runs"))
+        .and_then(Value::as_array)
+        .map(|runs| {
+            runs.iter()
+                .filter_map(|run| run.get("text").and_then(Value::as_str))
+                .map(str::trim)
+                .find(|text| {
+                    !text.is_empty()
+                        && *text != "•"
+                        && !is_music_kind(text)
+                        && !text.ends_with("songs")
+                })
+                .unwrap_or_default()
+                .to_string()
+        })
+        .unwrap_or_default();
+    playlist.art_url = header
+        .get("thumbnail")
+        .and_then(|thumbnail| thumbnail.get("musicThumbnailRenderer"))
+        .and_then(|thumbnail| thumbnail.get("thumbnail"))
+        .and_then(|thumbnail| thumbnail.get("thumbnails"))
+        .and_then(Value::as_array)
+        .and_then(|thumbnails| thumbnails.last())
+        .and_then(|thumbnail| thumbnail.get("url"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    playlist
+}
+
 /// The best audio-only stream in a player response: m4a first, then the
 /// other audio formats, and never a ciphered format without a direct URL.
 fn pick_audio(response: &Value) -> Option<Resolved> {
@@ -1332,6 +1539,32 @@ mod tests {
         assert_eq!(
             artists[0].art_url.as_deref(),
             Some("https://lh3.googleusercontent.com/b")
+        );
+    }
+
+    #[test]
+    fn a_searches_playlist_cards_are_read_with_their_pages() {
+        let response = json!({
+            "contents": { "musicTwoRowItemRenderer": {
+                "title": { "runs": [ { "text": "Radio Lofi",
+                    "navigationEndpoint": { "browseEndpoint": {
+                        "browseId": "VLRDATfcbG9maQ",
+                        "browseEndpointContextSupportedConfigs": {
+                            "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_PLAYLIST" }
+                        } } } } ] },
+                "subtitle": { "runs": [ { "text": "Saib, Sleepy Fish, Toonorth, and more" } ] },
+                "thumbnail": { "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [
+                    { "url": "https://lh3.googleusercontent.com/p" } ] } } }
+            } }
+        });
+        let playlists = music_playlists(&response);
+        assert_eq!(playlists.len(), 1);
+        assert_eq!(playlists[0].browse_id, "VLRDATfcbG9maQ");
+        assert_eq!(playlists[0].name, "Radio Lofi");
+        assert_eq!(playlists[0].owner, "Saib, Sleepy Fish, Toonorth, and more");
+        assert_eq!(
+            playlists[0].art_url.as_deref(),
+            Some("https://lh3.googleusercontent.com/p")
         );
     }
 

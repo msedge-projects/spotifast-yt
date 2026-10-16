@@ -20,12 +20,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.add_space(4.0);
     let supported: Vec<SearchFilter> = if app.youtube_mode {
-        // Only the kinds YouTube answers: songs, artists, and albums.
+        // Only the kinds YouTube answers: songs, artists, albums, and
+        // playlists.
         vec![
             SearchFilter::All,
             SearchFilter::Songs,
             SearchFilter::Artists,
             SearchFilter::Albums,
+            SearchFilter::Playlists,
         ]
     } else {
         SearchFilter::ALL.to_vec()

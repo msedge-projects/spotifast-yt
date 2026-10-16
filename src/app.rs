@@ -4557,9 +4557,11 @@ impl App {
         if !self.is_connected() {
             return;
         }
-        if self.youtube_mode && !matches!(page, Page::Artist(_) | Page::Album(_)) {
+        if self.youtube_mode
+            && !matches!(page, Page::Artist(_) | Page::Album(_) | Page::Playlist(_))
+        {
             // The library shelves have no YouTube answer; search, the
-            // artist pages, and the album pages do.
+            // artist, album, and playlist pages do.
             return;
         }
         match page {
