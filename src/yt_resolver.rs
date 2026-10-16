@@ -492,16 +492,17 @@ fn music_item(renderer: &Value) -> Option<YtTrack> {
     })
 }
 
-/// Whether a subtitle run is the row's item kind rather than a name.
+/// Whether a subtitle run is the row's item kind rather than a name. The
+/// kind run can end in a non-breaking space, so it is trimmed first.
 fn is_music_kind(text: &str) -> bool {
     matches!(
-        text,
+        text.trim(),
         "Song" | "Video" | "Single" | "EP" | "Album" | "Playlist" | "Artist" | "Podcast"
     )
 }
 
-/// The texts of one flex column of a music row, with the " • " separators
-/// and empty runs dropped.
+/// The texts of one flex column of a music row, trimmed, with the " • "
+/// separators and empty runs dropped.
 fn music_column_texts(columns: &[Value], index: usize) -> Vec<&str> {
     columns
         .get(index)
@@ -512,10 +513,8 @@ fn music_column_texts(columns: &[Value], index: usize) -> Vec<&str> {
         .map(|runs| {
             runs.iter()
                 .filter_map(|run| run.get("text").and_then(Value::as_str))
-                .filter(|text| {
-                    text.chars()
-                        .any(|character| !character.is_whitespace() && character != '•')
-                })
+                .map(str::trim)
+                .filter(|text| !text.is_empty() && *text != "•")
                 .collect()
         })
         .unwrap_or_default()
@@ -863,7 +862,7 @@ mod tests {
                               "navigationEndpoint": { "watchEndpoint": { "videoId": "AAAAAAAAAAA" } } }
                         ] } } },
                         { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
-                            { "text": "Song" },
+                            { "text": "Song\u{a0}" },
                             { "text": " • " },
                             { "text": "Metro Boomin" },
                             { "text": " • " },
