@@ -1606,34 +1606,7 @@ impl PlaylistHeaderLookup {
 /// URI with the title, artist text, duration, and artwork a row draws and
 /// the engine plays by.
 fn youtube_row(track: crate::yt_resolver::YtTrack) -> crate::api::models::Track {
-    let mut images = Vec::new();
-    if let Some(url) = track.art_url {
-        images.push(crate::api::models::Image {
-            url,
-            ..Default::default()
-        });
-    }
-    let artists = if track.artists.is_empty() {
-        Vec::new()
-    } else {
-        vec![crate::api::models::ArtistRef {
-            name: track.artists,
-            ..Default::default()
-        }]
-    };
-    crate::api::models::Track {
-        id: Some(track.video_id.clone()),
-        name: track.title,
-        uri: format!("yt:{}", track.video_id),
-        duration_ms: track.duration_ms.min(u64::from(u32::MAX)) as u32,
-        artists,
-        album: Some(crate::api::models::Album {
-            name: track.album,
-            images,
-            ..Default::default()
-        }),
-        ..Default::default()
-    }
+    track.to_row()
 }
 
 /// A YouTube Music result page shaped like a Spotify search answer.

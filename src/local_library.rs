@@ -54,6 +54,13 @@ impl LocalLibrary {
         Self { path, ..library }
     }
 
+    /// The library as its file holds it.
+    pub fn encode(&self) -> Option<String> {
+        serde_json::to_string_pretty(self)
+            .map_err(|error| log::warn!("unable to encode the library: {error}"))
+            .ok()
+    }
+
     /// Writes the library back to its file: a temporary file and a rename,
     /// so a crash mid-write cannot truncate the library.
     pub fn save(&self) -> Result<()> {

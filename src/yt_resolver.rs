@@ -41,6 +41,42 @@ pub struct YtTrack {
     pub official_audio: bool,
 }
 
+impl YtTrack {
+    /// The Spotify-shaped row this result draws as: a `yt:<video id>` URI
+    /// with the title, artist, duration, and artwork a row draws and the
+    /// engine plays by.
+    pub fn to_row(&self) -> crate::api::models::Track {
+        let mut images = Vec::new();
+        if let Some(url) = &self.art_url {
+            images.push(crate::api::models::Image {
+                url: url.clone(),
+                ..Default::default()
+            });
+        }
+        let artists = if self.artists.is_empty() {
+            Vec::new()
+        } else {
+            vec![crate::api::models::ArtistRef {
+                name: self.artists.clone(),
+                ..Default::default()
+            }]
+        };
+        crate::api::models::Track {
+            id: Some(self.video_id.clone()),
+            name: self.title.clone(),
+            uri: format!("yt:{}", self.video_id),
+            duration_ms: self.duration_ms.min(u64::from(u32::MAX)) as u32,
+            artists,
+            album: Some(crate::api::models::Album {
+                name: self.album.clone(),
+                images,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+}
+
 /// The life given to URLs whose own lifetime is not known (the yt-dlp path
 /// reports none).
 pub(crate) const DEFAULT_URL_TTL: Duration = Duration::from_secs(30 * 60);

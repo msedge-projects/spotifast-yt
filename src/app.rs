@@ -589,6 +589,10 @@ pub struct App {
     /// The interface runs without a Spotify account: YouTube search and
     /// the app's own library are the whole interface.
     pub youtube_mode: bool,
+    /// The app's own library for YouTube mode: liked songs and playlists.
+    pub library_store: crate::local_library::LocalLibrary,
+    /// Where the app's own library file lives.
+    local_library_path: std::path::PathBuf,
     /// Context shown immediately after play, until Spotify confirms it. An
     /// empty URI means a plain track list, whose lack of a context must also
     /// hide stale state.
@@ -817,6 +821,8 @@ impl App {
             ..options
         };
         let plays = crate::history::History::load(&dirs.history_file());
+        let local_library_path = dirs.settings_file().with_file_name("library.json");
+        let library_store = crate::local_library::LocalLibrary::load(local_library_path.clone());
         let tap = crate::vis::AudioTap::new();
         let eq = crate::eq::shared();
         if let Ok(mut shared) = eq.lock() {
@@ -1082,6 +1088,8 @@ impl App {
             last_unavailable_reconnect: None,
             yt_playback: false,
             youtube_mode,
+            library_store,
+            local_library_path,
             assumed_context: None,
             last_now_playing_uri: None,
             last_now_playing_sequence: 0,
@@ -1182,6 +1190,9 @@ impl App {
             app.home.top_songs = Loadable::Loaded(Vec::new());
             app.home.recommendations = Loadable::Loaded(Vec::new());
             app.home.made_for_you = Loadable::Loaded(Vec::new());
+            // The songs liked here live in the app's own store; the page
+            // and the hearts read from it.
+            app.rebuild_local_liked();
         }
         app.local.volume = app.settings.volume;
         // What was played here is on disk and needs nothing from the
@@ -8369,6 +8380,27 @@ impl App {
         }
     }
 
+    /// From nothing playing, a skip in YouTube mode starts the queue the
+    /// interface shows: the app's own rows are what the engine can play, so
+    /// Next is never silence while rows exist.
+    fn start_yt_queue(&mut self) {
+        let mut uris: Vec<String> = match &self.queue {
+            Loadable::Loaded(queue) => queue
+                .queue
+                .iter()
+                .map(|item| item.uri().to_string())
+                .collect(),
+            _ => Vec::new(),
+        };
+        if uris.is_empty() {
+            uris = self.manual_queue.clone();
+        }
+        if uris.is_empty() {
+            return;
+        }
+        self.play_request(PlayRequest::tracks(uris).starting_at_index(0), false);
+    }
+
     fn start_play(&mut self, request: PlayRequest, shuffle_first: bool) {
         // Shuffle applies across contexts until disabled. A selected row still
         // starts first; otherwise choose a random starting track.
@@ -9854,6 +9886,10 @@ impl App {
     }
 
     fn set_saved(&mut self, uri: String, saved: bool) {
+        if self.youtube_mode {
+            self.set_saved_local(uri, saved);
+            return;
+        }
         if uri.starts_with("spotify:playlist:") {
             self.saved.insert(uri.clone(), saved);
             let id = util::uri_id(&uri).unwrap_or_default().to_string();
@@ -10073,6 +10109,10 @@ impl App {
                 self.step_resume(true);
             }
             Action::Next => {
+                if self.youtube_mode && self.now_playing().is_none() {
+                    self.start_yt_queue();
+                    return;
+                }
                 // Move the queue head to the playing row immediately. Do not
                 // pop when there is no active playback target.
                 let target = self.target();
@@ -10095,6 +10135,10 @@ impl App {
                 }
             }
             Action::Previous => {
+                if self.youtube_mode && self.now_playing().is_none() {
+                    self.start_yt_queue();
+                    return;
+                }
                 // Next names its expected destination so the row moves before
                 // the engine does. Previous has no forward queue row to name;
                 // discard that expectation or a quick Next, Previous leaves
@@ -12044,6 +12088,51 @@ impl App {
         self.load_more(Page::LikedSongs);
     }
 
+    /// Fills the Liked Songs view from the app's own store and points the
+    /// heart state at it, in the order the songs were liked.
+    fn rebuild_local_liked(&mut self) {
+        let rows: Vec<crate::api::models::SavedTrack> = self
+            .library_store
+            .liked
+            .iter()
+            .map(|track| crate::api::models::SavedTrack {
+                added_at: None,
+                track: track.to_row(),
+            })
+            .collect();
+        self.saved.clear();
+        for row in &rows {
+            self.saved.insert(row.track.uri.clone(), true);
+        }
+        let total = rows.len() as u32;
+        self.library.liked.restore_cached(rows, total, None);
+    }
+
+    /// Liking in YouTube mode is the app's own business: the heart toggles,
+    /// the song enters or leaves the local store, and the file is written.
+    fn set_saved_local(&mut self, uri: String, saved: bool) {
+        self.set_saved_state(uri.clone(), saved);
+        if let Some(video_id) = uri.strip_prefix("yt:").map(str::to_string) {
+            if self.library_store.is_liked(&video_id) != saved {
+                let row = self.cached_track_anywhere(&uri);
+                let track = stored_track_of(&video_id, row.as_ref());
+                self.library_store.toggle_liked(&track);
+            }
+        }
+        self.persist_local_library();
+        self.rebuild_local_liked();
+    }
+
+    /// Hands the app's own library to the file writer; the UI thread never
+    /// waits for the disk.
+    fn persist_local_library(&mut self) {
+        if let Some(text) = self.library_store.encode() {
+            let path = self.local_library_path.clone();
+            self.files
+                .write(&path, text, fastframe_file::Access::Default);
+        }
+    }
+
     /// Whether Liked Songs at `revision` is a prefix of the rows shown now.
     pub(crate) fn liked_view_extends(&self, revision: u64) -> bool {
         self.liked_songs.view_extends(&self.library.liked, revision)
@@ -12341,6 +12430,34 @@ fn local_load(request: &PlayRequest, shuffle: bool) -> LoadSpec {
 }
 
 /// A cached Web API track as the playback engine's own track metadata.
+/// The stored-library shape of a row: what a liked song keeps when the
+/// app's own library holds it.
+fn stored_track_of(
+    video_id: &str,
+    row: Option<&crate::api::models::Track>,
+) -> crate::yt_resolver::YtTrack {
+    crate::yt_resolver::YtTrack {
+        video_id: video_id.to_string(),
+        title: row.map(|row| row.name.clone()).unwrap_or_default(),
+        artists: row
+            .map(|row| {
+                row.artists
+                    .iter()
+                    .map(|artist| artist.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default(),
+        album: row
+            .and_then(|row| row.album.as_ref())
+            .map(|album| album.name.clone())
+            .unwrap_or_default(),
+        duration_ms: row.map_or(0, |row| u64::from(row.duration_ms)),
+        art_url: row.and_then(|row| row.image(640)).map(str::to_string),
+        official_audio: true,
+    }
+}
+
 fn local_track_of(track: &crate::api::models::Track) -> LocalTrack {
     LocalTrack {
         uri: track.uri.clone(),
