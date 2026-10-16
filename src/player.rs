@@ -659,6 +659,8 @@ impl Engine {
             PlayerCommand::Transfer => spirc.transfer(None)?,
             // librespot reads each track's metadata itself; nothing to set.
             PlayerCommand::SetTrackMetadata { .. } => {}
+            // librespot resolves from Spotify directly; no URL cache to warm.
+            PlayerCommand::Warm { .. } => {}
             PlayerCommand::Load(spec) => {
                 let playing_track = spec
                     .offset_uri
