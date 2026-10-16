@@ -189,8 +189,26 @@ impl NativeResolver {
         self.player(&video).await
     }
 
-    /// One video's audio URL: the player request and the format pick.
+    /// One video's audio URL: the player request and the format pick, with
+    /// one immediate retry. YouTube hands its "confirm you are not a bot"
+    /// gate to the request, not to the client: the very next ask for the
+    /// same video usually passes, and the retry keeps a gated request from
+    /// costing the slow `yt-dlp` path.
     async fn player(&self, video: &str) -> Result<Resolved> {
+        match self.player_once(video).await {
+            Ok(stream) => Ok(stream),
+            Err(first) => {
+                log::info!("YouTube: the player request was refused ({first:#}); asking once more");
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                self.player_once(video)
+                    .await
+                    .with_context(|| format!("the retry failed after: {first:#}"))
+            }
+        }
+    }
+
+    /// One player request and the format pick.
+    async fn player_once(&self, video: &str) -> Result<Resolved> {
         let player = self
             .post(
                 PLAYER_URL,
