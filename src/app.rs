@@ -1174,6 +1174,14 @@ impl App {
             app.library.artists.loaded_once = true;
             app.library.artists.complete = true;
             app.library.artists.loading = false;
+            // Home's shelves have no YouTube answer: they rest empty, not
+            // loading, so the page draws no spinners.
+            app.home.recently_played = Loadable::Loaded(Vec::new());
+            app.home.top_artists = Loadable::Loaded(Vec::new());
+            app.home.top_tracks = Loadable::Loaded(Vec::new());
+            app.home.top_songs = Loadable::Loaded(Vec::new());
+            app.home.recommendations = Loadable::Loaded(Vec::new());
+            app.home.made_for_you = Loadable::Loaded(Vec::new());
         }
         app.local.volume = app.settings.volume;
         // What was played here is on disk and needs nothing from the
@@ -5185,6 +5193,11 @@ impl App {
     }
 
     fn refresh_devices(&mut self) {
+        if self.youtube_mode {
+            // Connect devices are Spotify's; YouTube mode has none to ask
+            // about.
+            return;
+        }
         if !self.is_connected() || self.devices_loading {
             return;
         }
@@ -8087,8 +8100,11 @@ impl App {
     fn yt_load(&self, request: &PlayRequest, shuffle: bool) -> LoadSpec {
         let mut uris = request.uris.clone();
         if let Some(context) = &request.context_uri {
-            if matches!(util::uri_kind(context), Some("track" | "episode")) {
-                // A single song is not a context here; it is one row.
+            // A single song is not a context here; it is one row. A stored
+            // YouTube track names its video, so it stands alone the same way.
+            if context.starts_with("yt:")
+                || matches!(util::uri_kind(context), Some("track" | "episode"))
+            {
                 if uris.is_empty() {
                     uris.push(context.clone());
                 }
