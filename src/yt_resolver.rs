@@ -99,11 +99,61 @@ impl YtArtist {
         crate::api::models::Artist {
             id: self.browse_id.clone(),
             name: self.name.clone(),
-            uri: format!("ytartist:{}", self.browse_id),
+            uri: format!("spotify:artist:{}", self.browse_id),
             images,
             ..Default::default()
         }
     }
+}
+
+/// One YouTube Music album card or album page: enough to draw its card and
+/// open its page.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct YtAlbum {
+    pub browse_id: String,
+    pub name: String,
+    pub artist: String,
+    pub year: Option<String>,
+    pub art_url: Option<String>,
+}
+
+impl YtAlbum {
+    /// The Spotify-shaped album the interface draws and opens.
+    pub fn to_row(&self) -> crate::api::models::Album {
+        let mut images = Vec::new();
+        if let Some(url) = &self.art_url {
+            images.push(crate::api::models::Image {
+                url: url.clone(),
+                ..Default::default()
+            });
+        }
+        let artists = if self.artist.is_empty() {
+            Vec::new()
+        } else {
+            vec![crate::api::models::ArtistRef {
+                name: self.artist.clone(),
+                ..Default::default()
+            }]
+        };
+        crate::api::models::Album {
+            id: self.browse_id.clone(),
+            name: self.name.clone(),
+            uri: format!("spotify:album:{}", self.browse_id),
+            album_type: Some("album".to_string()),
+            release_date: self.year.clone(),
+            images,
+            artists,
+            ..Default::default()
+        }
+    }
+}
+
+/// What one YouTube Music search answered.
+#[derive(Clone, Debug, Default)]
+pub struct MusicSearch {
+    pub tracks: Vec<YtTrack>,
+    pub artists: Vec<YtArtist>,
+    pub albums: Vec<YtAlbum>,
 }
 
 /// The life given to URLs whose own lifetime is not known (the yt-dlp path
@@ -139,6 +189,8 @@ const PLAYER_URL: &str = "https://www.youtube.com/youtubei/v1/player?prettyPrint
 /// YouTube Music's own search: results carry artists, album, duration,
 /// and thumbnails, which the plain video search does not.
 const MUSIC_SEARCH_URL: &str = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false";
+/// YouTube Music's browse: an album's own page, by its browse id.
+const MUSIC_BROWSE_URL: &str = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false";
 const MUSIC_CLIENT_NAME: &str = "WEB_REMIX";
 const MUSIC_CLIENT_VERSION: &str = "1.20260707.12.00";
 const MUSIC_CLIENT_ID: &str = "67";
@@ -211,8 +263,9 @@ impl NativeResolver {
     }
 
     /// YouTube Music search: music-typed tracks with their artists, album,
-    /// duration, and thumbnail, and the artists the response names.
-    pub async fn search_music(&self, query: &str) -> Result<(Vec<YtTrack>, Vec<YtArtist>)> {
+    /// duration, and thumbnail, and the artists and albums the response
+    /// names.
+    pub async fn search_music(&self, query: &str) -> Result<MusicSearch> {
         let response = self
             .post(
                 MUSIC_SEARCH_URL,
@@ -232,7 +285,36 @@ impl NativeResolver {
             .await
             .context("the music search was refused")?;
         self.remember_visitor(&response);
-        Ok((music_items(&response), music_artists(&response)))
+        Ok(MusicSearch {
+            tracks: music_items(&response),
+            artists: music_artists(&response),
+            albums: music_albums(&response),
+        })
+    }
+
+    /// One album page: its header and its songs, straight from the album's
+    /// own browse id.
+    pub async fn album_browse(&self, browse_id: &str) -> Result<(YtAlbum, Vec<YtTrack>)> {
+        let response = self
+            .post(
+                MUSIC_BROWSE_URL,
+                MUSIC_CLIENT_ID,
+                MUSIC_CLIENT_VERSION,
+                Some("https://music.youtube.com"),
+                &json!({
+                    "context": { "client": {
+                        "clientName": MUSIC_CLIENT_NAME,
+                        "clientVersion": MUSIC_CLIENT_VERSION,
+                        "hl": "en",
+                        "gl": "US",
+                    } },
+                    "browseId": browse_id,
+                }),
+            )
+            .await
+            .context("the album page was refused")?;
+        self.remember_visitor(&response);
+        Ok((album_header(browse_id, &response), music_items(&response)))
     }
 
     async fn try_resolve(&self, query: &str) -> Result<Resolved> {
@@ -448,7 +530,13 @@ fn music_item(renderer: &Value) -> Option<YtTrack> {
         Some(first) if is_music_kind(first) => &subtitle[1..],
         _ => &subtitle[..],
     };
-    let artists = subtitle.first().copied().unwrap_or_default();
+    let artists = subtitle
+        .first()
+        .copied()
+        // A row whose artist YouTube omitted can lead with the length;
+        // that is not an artist's name.
+        .filter(|text| music_duration_ms(text).is_none())
+        .unwrap_or_default();
     let duration_ms = subtitle
         .iter()
         .rev()
@@ -635,6 +723,199 @@ fn music_artist(renderer: &Value) -> Option<YtArtist> {
         name: name.to_string(),
         art_url,
     })
+}
+
+/// Every album the search response names, from the album cards whose page
+/// is an album page.
+fn music_albums(response: &Value) -> Vec<YtAlbum> {
+    let mut albums = Vec::new();
+    collect_music_albums(response, &mut albums);
+    albums
+}
+
+fn collect_music_albums(value: &Value, albums: &mut Vec<YtAlbum>) {
+    match value {
+        Value::Object(map) => {
+            for key in ["musicCardShelfRenderer", "musicTwoRowItemRenderer"] {
+                if let Some(renderer) = map.get(key)
+                    && let Some(album) = music_album(renderer)
+                    && !albums.iter().any(|held| held.browse_id == album.browse_id)
+                {
+                    albums.push(album);
+                }
+            }
+            for child in map.values() {
+                collect_music_albums(child, albums);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_music_albums(child, albums);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// One card's fields when its title links to an album page: the name, the
+/// artist and year under it, and the artwork beside them.
+fn music_album(renderer: &Value) -> Option<YtAlbum> {
+    let run = renderer.get("title")?.get("runs")?.as_array()?.first()?;
+    let name = run.get("text")?.as_str()?;
+    let browse = run.get("navigationEndpoint")?.get("browseEndpoint")?;
+    let album_page = browse
+        .get("browseEndpointContextSupportedConfigs")
+        .and_then(|configs| configs.get("browseEndpointContextMusicConfig"))
+        .and_then(|config| config.get("pageType"))
+        .and_then(Value::as_str)
+        .is_some_and(|page| page == "MUSIC_PAGE_TYPE_ALBUM");
+    if !album_page {
+        return None;
+    }
+    let browse_id = browse.get("browseId")?.as_str()?;
+    let mut texts = card_texts(renderer);
+    // "Album • Artist • 2024": the kind is not a name, and a bare year is
+    // the release date.
+    let year = texts
+        .iter()
+        .rev()
+        .find(|text| text.len() == 4 && text.chars().all(|c| c.is_ascii_digit()))
+        .map(|text| (*text).to_string());
+    if let Some(year) = &year {
+        texts.retain(|text| *text != year.as_str());
+    }
+    let artist = texts
+        .first()
+        .map(|text| (*text).to_string())
+        .unwrap_or_default();
+    Some(YtAlbum {
+        browse_id: browse_id.to_string(),
+        name: name.to_string(),
+        artist,
+        year,
+        art_url: card_art(renderer),
+    })
+}
+
+/// An album page's header: the title, artist, year, and artwork the browse
+/// response draws with.
+fn album_header(browse_id: &str, response: &Value) -> YtAlbum {
+    let mut header = None;
+    find_header(response, &mut header);
+    let mut album = YtAlbum {
+        browse_id: browse_id.to_string(),
+        name: String::new(),
+        artist: String::new(),
+        year: None,
+        art_url: None,
+    };
+    let Some(header) = header else {
+        return album;
+    };
+    album.name = header
+        .get("title")
+        .and_then(|title| {
+            title
+                .get("runs")
+                .and_then(Value::as_array)
+                .and_then(|runs| runs.first())
+                .and_then(|run| run.get("text"))
+                .and_then(Value::as_str)
+                .or_else(|| title.get("text").and_then(Value::as_str))
+        })
+        .unwrap_or_default()
+        .to_string();
+    let mut texts = header
+        .get("subtitle")
+        .and_then(|subtitle| subtitle.get("runs"))
+        .and_then(Value::as_array)
+        .map(|runs| {
+            runs.iter()
+                .filter_map(|run| run.get("text").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|text| !text.is_empty() && *text != "•" && !is_music_kind(text))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    album.year = texts
+        .iter()
+        .rev()
+        .find(|text| text.len() == 4 && text.chars().all(|c| c.is_ascii_digit()))
+        .map(|text| (*text).to_string());
+    if let Some(year) = &album.year {
+        texts.retain(|text| *text != year.as_str());
+    }
+    album.artist = texts
+        .first()
+        .map(|text| (*text).to_string())
+        .unwrap_or_default();
+    album.art_url = header
+        .get("thumbnail")
+        .and_then(|thumbnail| thumbnail.get("musicThumbnailRenderer"))
+        .and_then(|thumbnail| thumbnail.get("thumbnail"))
+        .and_then(|thumbnail| thumbnail.get("thumbnails"))
+        .and_then(Value::as_array)
+        .and_then(|thumbnails| thumbnails.last())
+        .and_then(|thumbnail| thumbnail.get("url"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    album
+}
+
+/// Finds the album page's header renderer anywhere in the response.
+fn find_header<'a>(value: &'a Value, header: &mut Option<&'a Value>) {
+    if header.is_some() {
+        return;
+    }
+    match value {
+        Value::Object(map) => {
+            for key in ["musicResponsiveHeaderRenderer", "musicDetailHeaderRenderer"] {
+                if let Some(found) = map.get(key) {
+                    *header = Some(found);
+                    return;
+                }
+            }
+            for child in map.values() {
+                find_header(child, header);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                find_header(child, header);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A card's subtitle runs, trimmed with separators and the kind dropped.
+fn card_texts(renderer: &Value) -> Vec<&str> {
+    renderer
+        .get("subtitle")
+        .and_then(|subtitle| subtitle.get("runs"))
+        .and_then(Value::as_array)
+        .map(|runs| {
+            runs.iter()
+                .filter_map(|run| run.get("text").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|text| !text.is_empty() && *text != "•" && !is_music_kind(text))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A card's artwork: the largest thumbnail beside it.
+fn card_art(renderer: &Value) -> Option<String> {
+    renderer
+        .get("thumbnail")
+        .and_then(|thumbnail| thumbnail.get("musicThumbnailRenderer"))
+        .and_then(|thumbnail| thumbnail.get("thumbnail"))
+        .and_then(|thumbnail| thumbnail.get("thumbnails"))
+        .and_then(Value::as_array)
+        .and_then(|thumbnails| thumbnails.last())
+        .and_then(|thumbnail| thumbnail.get("url"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// The best audio-only stream in a player response: m4a first, then the

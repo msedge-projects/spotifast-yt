@@ -713,18 +713,30 @@ pub enum Command {
         serial: u64,
         /// The answer belongs to a play-search.
         play: bool,
-        result: Result<
-            (
-                Vec<crate::yt_resolver::YtTrack>,
-                Vec<crate::yt_resolver::YtArtist>,
-            ),
-            String,
-        >,
+        result: Result<crate::yt_resolver::MusicSearch, String>,
     },
     /// Internal: a YouTube search behind an artist page finished.
     YtArtistTopDone {
         id: String,
         result: Result<Vec<crate::yt_resolver::YtTrack>, String>,
+    },
+    /// Internal: a YouTube search behind an artist's discography finished.
+    YtArtistAlbumsDone {
+        id: String,
+        groups: String,
+        offset: u32,
+        result: Result<Vec<crate::yt_resolver::YtAlbum>, String>,
+    },
+    /// Internal: a YouTube browse of an album's own page finished.
+    YtAlbumDone {
+        id: String,
+        result: Result<
+            (
+                crate::yt_resolver::YtAlbum,
+                Vec<crate::yt_resolver::YtTrack>,
+            ),
+            String,
+        >,
     },
     /// OS reports network reachability changed.
     NetworkStatus(bool),
@@ -1648,6 +1660,13 @@ fn youtube_artist_page(
         .then(|| youtube_page(artists.iter().map(|artist| artist.to_row()).collect()))
 }
 
+/// The albums of a search as a search page, when there are any.
+fn youtube_album_page(
+    albums: &[crate::yt_resolver::YtAlbum],
+) -> Option<crate::api::models::Page<crate::api::models::Album>> {
+    (!albums.is_empty()).then(|| youtube_page(albums.iter().map(|album| album.to_row()).collect()))
+}
+
 /// The engine's own words for a row YouTube named: handed over with every
 /// search answer so a play and the queue draw the song before any lookup.
 fn local_track_of_row(track: &crate::api::models::Track) -> crate::player::LocalTrack {
@@ -1771,6 +1790,14 @@ struct Worker {
     yt_tracks: std::collections::HashMap<String, crate::api::models::Track>,
     /// The artists YouTube searches answered, by channel, for their pages.
     yt_artists: std::collections::HashMap<String, crate::yt_resolver::YtArtist>,
+    /// The albums YouTube answered, by browse id, for their pages.
+    yt_albums: std::collections::HashMap<String, crate::yt_resolver::YtAlbum>,
+    /// The songs album pages answered, by browse id.
+    yt_album_tracks: std::collections::HashMap<String, Vec<crate::api::models::Track>>,
+    /// Album pages being read right now, so one page is one browse.
+    yt_album_browsing: std::collections::HashSet<String>,
+    /// The album-tracks request waiting on a browse: id, offset, generation.
+    yt_album_tracks_waiting: Option<(String, u32, u64)>,
     /// The plan, once the Web API has answered.
     premium: Option<bool>,
     cancel_signin: Option<watch::Sender<bool>>,
@@ -1856,6 +1883,10 @@ impl Worker {
             yt_search: None,
             yt_tracks: std::collections::HashMap::new(),
             yt_artists: std::collections::HashMap::new(),
+            yt_albums: std::collections::HashMap::new(),
+            yt_album_tracks: std::collections::HashMap::new(),
+            yt_album_browsing: std::collections::HashSet::new(),
+            yt_album_tracks_waiting: None,
             premium: None,
             cancel_signin: None,
             authorizing_source: None,
@@ -2214,6 +2245,50 @@ impl Worker {
                         self.dispatch(ApiRequest::ArtistTopTracks { id });
                     }
                 }
+                Command::Api(ApiRequest::ArtistAlbums { id, groups, offset }) => {
+                    if self.youtube_mode {
+                        self.artist_albums_youtube(id, groups, offset);
+                    } else {
+                        self.dispatch(ApiRequest::ArtistAlbums { id, groups, offset });
+                    }
+                }
+                Command::Api(ApiRequest::Album { id }) => {
+                    if self.youtube_mode {
+                        self.album_youtube(id);
+                    } else {
+                        self.dispatch(ApiRequest::Album { id });
+                    }
+                }
+                Command::Api(ApiRequest::AlbumTracks {
+                    id,
+                    offset,
+                    generation,
+                }) => {
+                    if self.youtube_mode {
+                        self.album_tracks_youtube(id, offset, generation);
+                    } else {
+                        self.dispatch(ApiRequest::AlbumTracks {
+                            id,
+                            offset,
+                            generation,
+                        });
+                    }
+                }
+                Command::Api(ApiRequest::AlbumQueueTracks {
+                    id,
+                    offset,
+                    request,
+                }) => {
+                    if self.youtube_mode {
+                        self.album_queue_youtube(id, offset, request);
+                    } else {
+                        self.dispatch(ApiRequest::AlbumQueueTracks {
+                            id,
+                            offset,
+                            request,
+                        });
+                    }
+                }
                 Command::Api(request) => {
                     self.dispatch(request);
                 }
@@ -2381,6 +2456,13 @@ impl Worker {
                     result,
                 } => self.yt_search_done(query, serial, play, result),
                 Command::YtArtistTopDone { id, result } => self.yt_artist_top_done(id, result),
+                Command::YtArtistAlbumsDone {
+                    id,
+                    groups,
+                    offset,
+                    result,
+                } => self.yt_artist_albums_done(id, groups, offset, result),
+                Command::YtAlbumDone { id, result } => self.yt_album_done(id, result),
                 Command::NetworkStatus(reachable) => {
                     self.network_reachable = reachable;
                     self.emit(Event::NetworkStatus(reachable));
@@ -4552,23 +4634,18 @@ impl Worker {
         query: String,
         serial: u64,
         play: bool,
-        result: Result<
-            (
-                Vec<crate::yt_resolver::YtTrack>,
-                Vec<crate::yt_resolver::YtArtist>,
-            ),
-            String,
-        >,
+        result: Result<crate::yt_resolver::MusicSearch, String>,
     ) {
         let result = match result {
-            Ok((tracks, artists)) => {
+            Ok(found) => {
                 log::info!(
                     "YouTube: \u{201c}{query}\u{201d} answered {} results",
-                    tracks.len()
+                    found.tracks.len()
                 );
-                self.remember_yt_rows(&tracks);
-                self.remember_yt_artists(&artists);
-                Ok((tracks, artists))
+                self.remember_yt_rows(&found.tracks);
+                self.remember_yt_artists(&found.artists);
+                self.remember_yt_albums(&found.albums);
+                Ok(found)
             }
             Err(error) => {
                 log::warn!("YouTube: the search for \u{201c}{query}\u{201d} failed ({error})");
@@ -4579,9 +4656,10 @@ impl Worker {
             ApiResponse::PlaySearch {
                 query,
                 serial,
-                result: result.map(|(tracks, _)| {
+                result: result.map(|found| {
                     // The song the query names: an official audio match
                     // when one is there, otherwise the first result.
+                    let tracks = &found.tracks;
                     tracks
                         .iter()
                         .position(|track| track.official_audio)
@@ -4593,9 +4671,10 @@ impl Worker {
             ApiResponse::Search {
                 query,
                 serial,
-                result: result.map(|(tracks, artists)| {
-                    let mut results = youtube_results(tracks);
-                    results.artists = youtube_artist_page(&artists);
+                result: result.map(|found| {
+                    let mut results = youtube_results(found.tracks);
+                    results.artists = youtube_artist_page(&found.artists);
+                    results.albums = youtube_album_page(&found.albums);
                     results
                 }),
             }
@@ -4668,7 +4747,7 @@ impl Worker {
             let result = resolver
                 .search_music(&artist.name)
                 .await
-                .map(|(tracks, _)| tracks)
+                .map(|found| found.tracks)
                 .map_err(|error| format!("{error:#}"));
             let _ = commands.send(Command::YtArtistTopDone { id, result });
         });
@@ -4691,6 +4770,234 @@ impl Worker {
         };
         self.emit(Event::Api(Box::new(ApiResponse::ArtistTopTracks {
             id,
+            result,
+        })));
+    }
+
+    /// Stores the albums a search answered, for their pages.
+    fn remember_yt_albums(&mut self, albums: &[crate::yt_resolver::YtAlbum]) {
+        for album in albums {
+            self.yt_albums
+                .insert(album.browse_id.clone(), album.clone());
+        }
+    }
+
+    /// An album page's own answer: what the searches knew about the album,
+    /// or a browse of the album's own page.
+    fn album_youtube(&mut self, id: String) {
+        if let Some(album) = self.yt_albums.get(&id) {
+            let result = Ok(album.to_row());
+            self.emit(Event::Api(Box::new(ApiResponse::Album { id, result })));
+            return;
+        }
+        self.browse_yt_album(id);
+    }
+
+    /// An album's songs: answered from the browse that read the page, with
+    /// the request's own generation echoed so the page accepts it.
+    fn album_tracks_youtube(&mut self, id: String, offset: u32, generation: u64) {
+        if let Some(rows) = self.yt_album_tracks.get(&id) {
+            let result = Ok(youtube_page(rows.clone()));
+            self.emit(Event::Api(Box::new(ApiResponse::AlbumTracks {
+                id,
+                offset,
+                generation,
+                result,
+            })));
+            return;
+        }
+        if offset > 0 {
+            // An album's songs are one page; a later page is over.
+            self.emit(Event::Api(Box::new(ApiResponse::AlbumTracks {
+                id,
+                offset,
+                generation,
+                result: Ok(youtube_page(Vec::new())),
+            })));
+            return;
+        }
+        self.yt_album_tracks_waiting = Some((id.clone(), offset, generation));
+        self.browse_yt_album(id);
+    }
+
+    /// An album's songs queued in one go: the same page the table shows.
+    fn album_queue_youtube(&self, id: String, offset: u32, request: u64) {
+        let result = match self.yt_album_tracks.get(&id) {
+            Some(rows) => Ok(youtube_page(rows.clone())),
+            None => Ok(youtube_page(Vec::new())),
+        };
+        self.emit(Event::Api(Box::new(ApiResponse::AlbumQueueTracks {
+            result,
+            offset,
+            request,
+        })));
+    }
+
+    /// Asks YouTube for an album's own page (header and songs); the rows
+    /// answer the pending Album and AlbumTracks requests when they land.
+    fn browse_yt_album(&mut self, id: String) {
+        if !self.yt_album_browsing.insert(id.clone()) {
+            return;
+        }
+        let Some(resolver) = self.yt_search.clone() else {
+            self.yt_album_browsing.remove(&id);
+            return;
+        };
+        log::info!("YouTube: reading the album page {id}");
+        let commands = self.commands.clone();
+        let task = tokio::spawn(async move {
+            let result = resolver
+                .album_browse(&id)
+                .await
+                .map_err(|error| format!("{error:#}"));
+            let _ = commands.send(Command::YtAlbumDone { id, result });
+        });
+        self.search_tasks.push(task.abort_handle());
+    }
+
+    /// An album browse answered: stored, handed to the engine, and the
+    /// waiting requests answered.
+    fn yt_album_done(
+        &mut self,
+        id: String,
+        result: Result<
+            (
+                crate::yt_resolver::YtAlbum,
+                Vec<crate::yt_resolver::YtTrack>,
+            ),
+            String,
+        >,
+    ) {
+        self.yt_album_browsing.remove(&id);
+        match result {
+            Ok((album, tracks)) => {
+                log::info!("YouTube: the album page answered {} songs", tracks.len());
+                self.remember_yt_rows(&tracks);
+                let rows: Vec<crate::api::models::Track> = tracks
+                    .iter()
+                    .map(|track| youtube_row(track.clone()))
+                    .collect();
+                self.yt_album_tracks.insert(id.clone(), rows.clone());
+                let album_row = album.to_row();
+                self.yt_albums.insert(id.clone(), album);
+                self.emit(Event::Api(Box::new(ApiResponse::Album {
+                    id: id.clone(),
+                    result: Ok(album_row),
+                })));
+                if self
+                    .yt_album_tracks_waiting
+                    .as_ref()
+                    .is_some_and(|(waiting, _, _)| *waiting == id)
+                    && let Some((_, offset, generation)) = self.yt_album_tracks_waiting.take()
+                {
+                    self.emit(Event::Api(Box::new(ApiResponse::AlbumTracks {
+                        id,
+                        offset,
+                        generation,
+                        result: Ok(youtube_page(rows)),
+                    })));
+                }
+            }
+            Err(error) => {
+                log::warn!("YouTube: the album page failed ({error})");
+                self.emit(Event::Api(Box::new(ApiResponse::Album {
+                    id: id.clone(),
+                    result: Err(ApiError::Network(error.clone())),
+                })));
+                if self
+                    .yt_album_tracks_waiting
+                    .as_ref()
+                    .is_some_and(|(waiting, _, _)| *waiting == id)
+                    && let Some((_, offset, generation)) = self.yt_album_tracks_waiting.take()
+                {
+                    self.emit(Event::Api(Box::new(ApiResponse::AlbumTracks {
+                        id,
+                        offset,
+                        generation,
+                        result: Err(ApiError::Network(error)),
+                    })));
+                }
+            }
+        }
+    }
+
+    /// An artist page's discography: the artist's name searched, its album
+    /// cards taken.
+    fn artist_albums_youtube(&mut self, id: String, groups: String, offset: u32) {
+        if offset > 0 {
+            self.emit(Event::Api(Box::new(ApiResponse::ArtistAlbums {
+                id,
+                groups,
+                offset,
+                result: Ok(youtube_page(Vec::new())),
+            })));
+            return;
+        }
+        let Some(artist) = self.yt_artists.get(&id).cloned() else {
+            self.emit(Event::Api(Box::new(ApiResponse::ArtistAlbums {
+                id,
+                groups,
+                offset,
+                result: Err(ApiError::Network(
+                    "this YouTube artist is not known to this session".into(),
+                )),
+            })));
+            return;
+        };
+        let Some(resolver) = self.yt_search.clone() else {
+            self.emit(Event::Api(Box::new(ApiResponse::ArtistAlbums {
+                id,
+                groups,
+                offset,
+                result: Err(ApiError::Network(
+                    "the YouTube search client is not available".into(),
+                )),
+            })));
+            return;
+        };
+        log::info!(
+            "YouTube: searching \u{201c}{}\u{201d} for the discography",
+            artist.name
+        );
+        let commands = self.commands.clone();
+        let task = tokio::spawn(async move {
+            let result = resolver
+                .search_music(&artist.name)
+                .await
+                .map(|found| found.albums)
+                .map_err(|error| format!("{error:#}"));
+            let _ = commands.send(Command::YtArtistAlbumsDone {
+                id,
+                groups,
+                offset,
+                result,
+            });
+        });
+        self.search_tasks.push(task.abort_handle());
+    }
+
+    /// An artist's discography search answered: albums stored and answered.
+    fn yt_artist_albums_done(
+        &mut self,
+        id: String,
+        groups: String,
+        offset: u32,
+        result: Result<Vec<crate::yt_resolver::YtAlbum>, String>,
+    ) {
+        let result = match result {
+            Ok(albums) => {
+                log::info!("YouTube: the artist page answered {} albums", albums.len());
+                self.remember_yt_albums(&albums);
+                Ok(youtube_page(
+                    albums.iter().map(|album| album.to_row()).collect(),
+                ))
+            }
+            Err(error) => Err(ApiError::Network(error)),
+        };
+        self.emit(Event::Api(Box::new(ApiResponse::ArtistAlbums {
+            id,
+            groups,
+            offset,
             result,
         })));
     }

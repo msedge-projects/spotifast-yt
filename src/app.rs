@@ -4557,10 +4557,9 @@ impl App {
         if !self.is_connected() {
             return;
         }
-        if self.youtube_mode {
-            // YouTube mode loads no Spotify page: search and the engine
-            // stand on their own, and the library arrives with the app's
-            // own store.
+        if self.youtube_mode && !matches!(page, Page::Artist(_) | Page::Album(_)) {
+            // The library shelves have no YouTube answer; search, the
+            // artist pages, and the album pages do.
             return;
         }
         match page {
@@ -5822,6 +5821,11 @@ impl App {
     }
 
     pub fn request_contains(&mut self, uris: Vec<String>) {
+        if self.youtube_mode {
+            // Saved state is the app's own store here; Spotify is not
+            // asked, and a heart never waits on it.
+            return;
+        }
         let mut batch = Vec::new();
         for uri in uris {
             if uri.is_empty()
