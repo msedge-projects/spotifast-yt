@@ -874,7 +874,7 @@ mod tests {
                     ]
                 } }
             ] } } }
-        });
+        );
         let items = music_items(&response);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].artists, "Metro Boomin");
