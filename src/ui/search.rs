@@ -492,8 +492,14 @@ fn songs(app: &mut App, ui: &mut egui::Ui, results: &SearchResults, limit: usize
     if page.items.is_empty() {
         return;
     }
+    let full_table = limit == usize::MAX;
     theme::section_title(ui, &palette, &gettext(app.locale, "Songs"));
     ui.add_space(4.0);
+    if full_table {
+        // The Songs filter reads as a table, the way the album pages do:
+        // numbered rows with the album column beside the songs.
+        let _ = widgets::table_header(ui, &palette, app.locale, true, false, false, true, None);
+    }
     let uris: Arc<[String]> = page
         .items
         .iter()
@@ -507,22 +513,23 @@ fn songs(app: &mut App, ui: &mut egui::Ui, results: &SearchResults, limit: usize
         .cloned()
         .map(PlayableItem::Track)
         .collect();
+    let thin = full_table && app.settings.tracklist_compact;
     for (index, item) in items.iter().take(limit).enumerate() {
         widgets::track_row(
             ui,
             app,
             TrackRow {
                 index,
-                number: None,
+                number: full_table.then_some(index + 1),
                 item,
                 context: &context,
-                show_cover: true,
-                show_album: limit == usize::MAX,
+                show_cover: !thin,
+                show_album: full_table,
                 added_at: None,
                 added_by: None,
                 show_added_by: false,
-                compact: limit != usize::MAX,
-                thin: false,
+                compact: !full_table,
+                thin,
                 shift: 0.0,
                 picked: false,
                 picked_songs: &[],
