@@ -264,8 +264,21 @@ impl NativeResolver {
 
     /// YouTube Music search: music-typed tracks with their artists, album,
     /// duration, and thumbnail, and the artists and albums the response
-    /// names.
+    /// names. An answer with no rows at all is asked once more: YouTube's
+    /// gates are per request, and the very next ask usually answers.
     pub async fn search_music(&self, query: &str) -> Result<MusicSearch> {
+        let found = self.search_music_once(query).await?;
+        if !found.tracks.is_empty() || !found.artists.is_empty() || !found.albums.is_empty() {
+            return Ok(found);
+        }
+        log::info!(
+            "YouTube: the search for \u{201c}{query}\u{201d} answered no rows; asking once more"
+        );
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        self.search_music_once(query).await
+    }
+
+    async fn search_music_once(&self, query: &str) -> Result<MusicSearch> {
         let response = self
             .post(
                 MUSIC_SEARCH_URL,
@@ -285,16 +298,36 @@ impl NativeResolver {
             .await
             .context("the music search was refused")?;
         self.remember_visitor(&response);
-        Ok(MusicSearch {
+        let found = MusicSearch {
             tracks: music_items(&response),
             artists: music_artists(&response),
             albums: music_albums(&response),
-        })
+        };
+        if found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty() {
+            // A gate page parses to nothing; its own keys say which one it
+            // was, should this ever become a habit.
+            let keys: Vec<&str> = response
+                .as_object()
+                .map(|map| map.keys().map(String::as_str).take(12).collect())
+                .unwrap_or_default();
+            log::info!("YouTube: an empty search response held {keys:?}");
+        }
+        Ok(found)
     }
 
     /// One album page: its header and its songs, straight from the album's
-    /// own browse id.
+    /// own browse id. An empty page is asked once more, like a search.
     pub async fn album_browse(&self, browse_id: &str) -> Result<(YtAlbum, Vec<YtTrack>)> {
+        let page = self.album_browse_once(browse_id).await?;
+        if !page.0.name.is_empty() || !page.1.is_empty() {
+            return Ok(page);
+        }
+        log::info!("YouTube: the album page {browse_id} answered nothing; asking once more");
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        self.album_browse_once(browse_id).await
+    }
+
+    async fn album_browse_once(&self, browse_id: &str) -> Result<(YtAlbum, Vec<YtTrack>)> {
         let response = self
             .post(
                 MUSIC_BROWSE_URL,

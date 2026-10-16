@@ -80,6 +80,47 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         );
         return;
     }
+    // A filter whose own kind answered nothing says so, rather than
+    // drawing a blank page while other kinds have rows.
+    let filter_empty = match app.search.filter {
+        SearchFilter::All => false,
+        SearchFilter::Songs => results
+            .tracks
+            .as_ref()
+            .is_none_or(|page| page.items.is_empty()),
+        SearchFilter::Artists => results
+            .artists
+            .as_ref()
+            .is_none_or(|page| page.items.is_empty()),
+        SearchFilter::Albums => results
+            .albums
+            .as_ref()
+            .is_none_or(|page| page.items.is_empty()),
+        SearchFilter::Playlists => results
+            .playlists
+            .as_ref()
+            .is_none_or(|page| page.items.is_empty()),
+        SearchFilter::Podcasts => results
+            .shows
+            .as_ref()
+            .is_none_or(|page| page.items.is_empty()),
+        SearchFilter::Episodes => results
+            .episodes
+            .as_ref()
+            .is_none_or(|page| page.items.is_empty()),
+    };
+    if filter_empty {
+        widgets::empty_state(
+            ui,
+            &palette,
+            Icon::Search,
+            // Translators: {query} is the text the user searched for.
+            &gettext(app.locale, "No results for “{query}”")
+                .replace("{query}", &app.search.committed),
+            &gettext(app.locale, "Check the spelling, or try fewer words."),
+        );
+        return;
+    }
     match app.search.filter {
         SearchFilter::All => all(app, ui, &results),
         SearchFilter::Songs => songs(app, ui, &results, usize::MAX),
