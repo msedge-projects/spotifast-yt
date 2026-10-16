@@ -434,6 +434,7 @@ impl Actor {
                 self.manual.push_back(Entry::new(uri, track));
             }
             PlayerCommand::SetTrackMetadata { uri, track } => self.set_metadata(&uri, track),
+            PlayerCommand::Warm { uri, track } => self.warm(uri, track),
             PlayerCommand::Seek(position_ms) => self.seek(position_ms),
             PlayerCommand::Volume(volume) | PlayerCommand::VolumePreview(volume) => {
                 self.set_volume(volume)
@@ -707,6 +708,26 @@ impl Actor {
                     log::info!("YouTube: prefetch failed ({error}); it will resolve on demand")
                 }
             }
+            let _ = messages.send(Message::Prefetched { uri, result });
+        });
+    }
+
+    /// Resolves a row before it is asked for, for a play already known to
+    /// be coming (a play-search's own match): the URL waits in the cache,
+    /// so the play itself starts without the resolve on the visible path.
+    fn warm(&mut self, uri: String, track: LocalTrack) {
+        if self.cached_url(&uri).is_some() {
+            return;
+        }
+        let query = format!("{} {}", track.title, track.artist_names());
+        let yt_dlp = self.yt_dlp.clone();
+        let resolver = self.resolver.clone();
+        let messages = self.messages.clone();
+        log::info!("YouTube: warming {} before it plays", track.title);
+        tokio::spawn(async move {
+            let result = resolve(&resolver, &yt_dlp, &uri, query.trim())
+                .await
+                .map_err(|error| format!("{error:#}"));
             let _ = messages.send(Message::Prefetched { uri, result });
         });
     }

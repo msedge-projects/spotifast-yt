@@ -4652,6 +4652,26 @@ impl Worker {
                 Err(ApiError::Network(error))
             }
         };
+        // A play-search's match is warmed now: the resolve runs while the
+        // interface draws the answer, and the play starts from the cache.
+        if play && let Ok(found) = &result {
+            let tracks = &found.tracks;
+            let picked = tracks
+                .iter()
+                .position(|track| track.official_audio)
+                .or((!tracks.is_empty()).then_some(0));
+            if let Some(index) = picked {
+                let uri = format!("yt:{}", tracks[index].video_id);
+                if let Some(engine) = &self.yt
+                    && let Some(row) = self.yt_tracks.get(&uri)
+                {
+                    let _ = engine.command(crate::player::PlayerCommand::Warm {
+                        uri,
+                        track: local_track_of_row(row),
+                    });
+                }
+            }
+        }
         let response = if play {
             ApiResponse::PlaySearch {
                 query,

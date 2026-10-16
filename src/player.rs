@@ -304,6 +304,14 @@ pub enum PlayerCommand {
         uri: String,
         track: LocalTrack,
     },
+    /// Resolve a row before it is asked for: a play already known to be
+    /// coming (a play-search's own match) warms the engine's URL cache
+    /// while the interface draws the answer, so the play starts without
+    /// the resolve on its path.
+    Warm {
+        uri: String,
+        track: LocalTrack,
+    },
     Seek(u32),
     /// The volume to keep: applied at once and told to Spotify Connect.
     Volume(u16),

@@ -274,7 +274,7 @@ impl NativeResolver {
         log::info!(
             "YouTube: the search for \u{201c}{query}\u{201d} answered no rows; asking once more"
         );
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
         self.search_music_once(query).await
     }
 
@@ -323,7 +323,7 @@ impl NativeResolver {
             return Ok(page);
         }
         log::info!("YouTube: the album page {browse_id} answered nothing; asking once more");
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
         self.album_browse_once(browse_id).await
     }
 
@@ -376,7 +376,7 @@ impl NativeResolver {
             Ok(stream) => Ok(stream),
             Err(first) => {
                 log::info!("YouTube: the player request was refused ({first:#}); asking once more");
-                tokio::time::sleep(Duration::from_millis(400)).await;
+                tokio::time::sleep(Duration::from_millis(250)).await;
                 self.player_once(video)
                     .await
                     .with_context(|| format!("the retry failed after: {first:#}"))
