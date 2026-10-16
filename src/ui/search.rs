@@ -19,7 +19,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     ui.add_space(4.0);
-    let labels: Vec<_> = SearchFilter::ALL
+    let supported: Vec<SearchFilter> = if app.youtube_mode {
+        // Only the kinds YouTube answers: songs and artists.
+        vec![
+            SearchFilter::All,
+            SearchFilter::Songs,
+            SearchFilter::Artists,
+        ]
+    } else {
+        SearchFilter::ALL.to_vec()
+    };
+    let labels: Vec<_> = supported
         .iter()
         .map(|f| (*f, f.label(app.locale)))
         .collect();

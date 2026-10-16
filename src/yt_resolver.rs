@@ -77,6 +77,35 @@ impl YtTrack {
     }
 }
 
+/// One YouTube Music artist result: enough to draw its card and open its
+/// page.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct YtArtist {
+    pub browse_id: String,
+    pub name: String,
+    pub art_url: Option<String>,
+}
+
+impl YtArtist {
+    /// The Spotify-shaped artist the interface draws and opens.
+    pub fn to_row(&self) -> crate::api::models::Artist {
+        let mut images = Vec::new();
+        if let Some(url) = &self.art_url {
+            images.push(crate::api::models::Image {
+                url: url.clone(),
+                ..Default::default()
+            });
+        }
+        crate::api::models::Artist {
+            id: self.browse_id.clone(),
+            name: self.name.clone(),
+            uri: format!("ytartist:{}", self.browse_id),
+            images,
+            ..Default::default()
+        }
+    }
+}
+
 /// The life given to URLs whose own lifetime is not known (the yt-dlp path
 /// reports none).
 pub(crate) const DEFAULT_URL_TTL: Duration = Duration::from_secs(30 * 60);
@@ -181,12 +210,9 @@ impl NativeResolver {
         }
     }
 
-    /// YouTube Music search for the app's own search page: music-typed
-    /// results with artists, album, duration, and thumbnail.
-    // The search page is the next milestone; until its first caller lands,
-    // only the parser tests above exercise this.
-    #[allow(dead_code)]
-    pub async fn search_music(&self, query: &str) -> Result<Vec<YtTrack>> {
+    /// YouTube Music search: music-typed tracks with their artists, album,
+    /// duration, and thumbnail, and the artists the response names.
+    pub async fn search_music(&self, query: &str) -> Result<(Vec<YtTrack>, Vec<YtArtist>)> {
         let response = self
             .post(
                 MUSIC_SEARCH_URL,
@@ -206,7 +232,7 @@ impl NativeResolver {
             .await
             .context("the music search was refused")?;
         self.remember_visitor(&response);
-        Ok(music_items(&response))
+        Ok((music_items(&response), music_artists(&response)))
     }
 
     async fn try_resolve(&self, query: &str) -> Result<Resolved> {
@@ -531,6 +557,73 @@ fn music_duration_ms(text: &str) -> Option<u64> {
     (seconds > 0).then_some(seconds.saturating_mul(1000))
 }
 
+/// Every artist the search response names, in order, from the artist cards
+/// (the top card and the two-row items) whose page is an artist page.
+fn music_artists(response: &Value) -> Vec<YtArtist> {
+    let mut artists = Vec::new();
+    collect_music_artists(response, &mut artists);
+    artists
+}
+
+fn collect_music_artists(value: &Value, artists: &mut Vec<YtArtist>) {
+    match value {
+        Value::Object(map) => {
+            for key in ["musicCardShelfRenderer", "musicTwoRowItemRenderer"] {
+                if let Some(renderer) = map.get(key)
+                    && let Some(artist) = music_artist(renderer)
+                    && !artists
+                        .iter()
+                        .any(|held| held.browse_id == artist.browse_id)
+                {
+                    artists.push(artist);
+                }
+            }
+            for child in map.values() {
+                collect_music_artists(child, artists);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_music_artists(child, artists);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// One card's fields when its title links to an artist page: the name, the
+/// channel the page reads, and the artwork beside them.
+fn music_artist(renderer: &Value) -> Option<YtArtist> {
+    let run = renderer.get("title")?.get("runs")?.as_array()?.first()?;
+    let name = run.get("text")?.as_str()?;
+    let browse = run.get("navigationEndpoint")?.get("browseEndpoint")?;
+    let artist_page = browse
+        .get("browseEndpointContextSupportedConfigs")
+        .and_then(|configs| configs.get("browseEndpointContextMusicConfig"))
+        .and_then(|config| config.get("pageType"))
+        .and_then(Value::as_str)
+        .is_some_and(|page| page == "MUSIC_PAGE_TYPE_ARTIST");
+    if !artist_page {
+        return None;
+    }
+    let browse_id = browse.get("browseId")?.as_str()?;
+    let art_url = renderer
+        .get("thumbnail")
+        .and_then(|thumbnail| thumbnail.get("musicThumbnailRenderer"))
+        .and_then(|thumbnail| thumbnail.get("thumbnail"))
+        .and_then(|thumbnail| thumbnail.get("thumbnails"))
+        .and_then(Value::as_array)
+        .and_then(|thumbnails| thumbnails.last())
+        .and_then(|thumbnail| thumbnail.get("url"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Some(YtArtist {
+        browse_id: browse_id.to_string(),
+        name: name.to_string(),
+        art_url,
+    })
+}
+
 /// The best audio-only stream in a player response: m4a first, then the
 /// other audio formats, and never a ciphered format without a direct URL.
 fn pick_audio(response: &Value) -> Option<Resolved> {
@@ -743,6 +836,39 @@ mod tests {
         assert_eq!(items[1].album, "", "a view count is not an album");
         assert_eq!(items[1].duration_ms, 0, "a view count is not a duration");
         assert!(!items[1].official_audio);
+    }
+
+    #[test]
+    fn a_searches_artist_cards_are_read_with_their_pages() {
+        let response = json!({
+            "contents": { "musicCardShelfRenderer": {
+                "title": { "runs": [ { "text": "Don Toliver",
+                    "navigationEndpoint": { "browseEndpoint": {
+                        "browseId": "UCSzWQmDsKG37iKN2vw1G-2Q",
+                        "browseEndpointContextSupportedConfigs": {
+                            "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ARTIST" }
+                        } } } } ] },
+                "thumbnail": { "musicThumbnailRenderer": { "thumbnail": { "thumbnails": [
+                    { "url": "https://lh3.googleusercontent.com/a" },
+                    { "url": "https://lh3.googleusercontent.com/b" } ] } } }
+            } },
+            "musicTwoRowItemRenderer": {
+                "title": { "runs": [ { "text": "Hardstone Psycho",
+                    "navigationEndpoint": { "browseEndpoint": {
+                        "browseId": "MPREb_x",
+                        "browseEndpointContextSupportedConfigs": {
+                            "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ALBUM" }
+                        } } } } ] }
+            }
+        });
+        let artists = music_artists(&response);
+        assert_eq!(artists.len(), 1, "only artist pages are artists");
+        assert_eq!(artists[0].browse_id, "UCSzWQmDsKG37iKN2vw1G-2Q");
+        assert_eq!(artists[0].name, "Don Toliver");
+        assert_eq!(
+            artists[0].art_url.as_deref(),
+            Some("https://lh3.googleusercontent.com/b")
+        );
     }
 
     #[test]
