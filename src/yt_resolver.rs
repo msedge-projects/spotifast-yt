@@ -521,28 +521,13 @@ fn collect_music_items(value: &Value, items: &mut Vec<YtTrack>) {
 fn music_item(renderer: &Value) -> Option<YtTrack> {
     let columns = renderer.get("flexColumns")?.as_array()?;
     let title_runs = music_column_texts(columns, 0);
-    let title = *title_runs.first()?;
+    let title = title_runs.first()?.trim();
     let video_id = music_video_id(columns)?;
     let subtitle = music_column_texts(columns, 1);
-    // YouTube Music leads typed rows with the item's kind ("Song • Artist
-    // • Album • 3:20"); it is not part of the names.
-    let subtitle = match subtitle.first() {
-        Some(first) if is_music_kind(first) => &subtitle[1..],
-        _ => &subtitle[..],
-    };
-    let artists = subtitle
-        .first()
-        .copied()
-        // A row whose artist YouTube omitted can lead with the length;
-        // that is not an artist's name.
-        .filter(|text| music_duration_ms(text).is_none())
-        .unwrap_or_default();
-    let duration_ms = subtitle
-        .iter()
-        .rev()
-        .find_map(|text| music_duration_ms(text))
-        .unwrap_or(0);
-    let album = if subtitle.len() >= 3 { subtitle[1] } else { "" };
+    let subtitle = music_subtitle(&subtitle);
+    let artists = subtitle.artists;
+    let duration_ms = subtitle.duration_ms;
+    let album = subtitle.album;
     let official_audio = renderer
         .get("flexColumns")
         .and_then(Value::as_array)
@@ -589,8 +574,9 @@ fn is_music_kind(text: &str) -> bool {
     )
 }
 
-/// The texts of one flex column of a music row, trimmed, with the " • "
-/// separators and empty runs dropped.
+/// The texts of one flex column of a music row, with empty runs dropped;
+/// the runs keep their own spacing, because YouTube splits artist names
+/// into ", " and " & " separator runs the joined text needs.
 fn music_column_texts(columns: &[Value], index: usize) -> Vec<&str> {
     columns
         .get(index)
@@ -601,11 +587,72 @@ fn music_column_texts(columns: &[Value], index: usize) -> Vec<&str> {
         .map(|runs| {
             runs.iter()
                 .filter_map(|run| run.get("text").and_then(Value::as_str))
-                .map(str::trim)
-                .filter(|text| !text.is_empty() && *text != "•")
+                .filter(|text| !text.trim().is_empty())
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// A song row's subtitle taken apart: the kind dropped, the artists' runs
+/// joined (their names arrive split by ", " and " & " runs), the album, the
+/// length, and view counts separated by " • ".
+struct MusicSubtitle {
+    artists: String,
+    album: String,
+    duration_ms: u64,
+}
+
+fn music_subtitle(tokens: &[&str]) -> MusicSubtitle {
+    let mut segments: Vec<Vec<&str>> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for token in tokens {
+        if token.trim() == "•" {
+            segments.push(std::mem::take(&mut current));
+        } else {
+            current.push(token);
+        }
+    }
+    segments.push(current);
+    if let Some(first) = segments.first()
+        && first.len() == 1
+        && is_music_kind(first[0])
+    {
+        segments.remove(0);
+    }
+    let artists = segments
+        .first()
+        .map(|segment| segment.concat())
+        .unwrap_or_default();
+    let artists = if music_duration_ms(&artists).is_some() || is_release_year(&artists) {
+        // YouTube omitted the artist; a bare length or year is not its name.
+        String::new()
+    } else {
+        artists
+    };
+    let mut album = String::new();
+    let mut duration_ms = 0;
+    for segment in segments.iter().skip(1) {
+        let text = segment.concat();
+        let text = text.trim();
+        if text.is_empty() || text.ends_with("views") {
+            continue;
+        }
+        if let Some(ms) = music_duration_ms(text) {
+            duration_ms = ms;
+        } else if album.is_empty() && !is_release_year(text) {
+            album = text.to_string();
+        }
+    }
+    MusicSubtitle {
+        artists,
+        album,
+        duration_ms,
+    }
+}
+
+/// Whether a subtitle segment is a release year rather than a name.
+fn is_release_year(text: &str) -> bool {
+    text.len() == 4 && text.chars().all(|character| character.is_ascii_digit())
 }
 
 /// The video the first flex column names: the title's own link.
@@ -1130,6 +1177,41 @@ mod tests {
         assert_eq!(items[1].album, "", "a view count is not an album");
         assert_eq!(items[1].duration_ms, 0, "a view count is not a duration");
         assert!(!items[1].official_audio);
+    }
+
+    #[test]
+    fn a_multiple_artist_row_joins_its_names() {
+        let response = json!({
+            "contents": { "musicShelfRenderer": { "contents": [
+                { "musicResponsiveListItemRenderer": {
+                    "flexColumns": [
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "They Wanna Have Fun",
+                              "navigationEndpoint": { "watchEndpoint": { "videoId": "BBBBBBBBBBB" } } }
+                        ] } } },
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "Song" },
+                            { "text": " • " },
+                            { "text": "Metro Boomin" },
+                            { "text": ", " },
+                            { "text": "Travis Porter" },
+                            { "text": ", " },
+                            { "text": "Young Dro" },
+                            { "text": " & " },
+                            { "text": "Gucci Mane" }
+                        ] } } }
+                    ]
+                } }
+            ] } } }
+        );
+        let items = music_items(&response);
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].artists,
+            "Metro Boomin, Travis Porter, Young Dro & Gucci Mane"
+        );
+        assert_eq!(items[0].album, "", "a separator is not an album");
+        assert_eq!(items[0].duration_ms, 0);
     }
 
     #[test]
