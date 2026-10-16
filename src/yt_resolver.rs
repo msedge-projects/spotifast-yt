@@ -442,6 +442,12 @@ fn music_item(renderer: &Value) -> Option<YtTrack> {
     let title = *title_runs.first()?;
     let video_id = music_video_id(columns)?;
     let subtitle = music_column_texts(columns, 1);
+    // YouTube Music leads typed rows with the item's kind ("Song • Artist
+    // • Album • 3:20"); it is not part of the names.
+    let subtitle = match subtitle.first() {
+        Some(first) if is_music_kind(first) => &subtitle[1..],
+        _ => &subtitle[..],
+    };
     let artists = subtitle.first().copied().unwrap_or_default();
     let duration_ms = subtitle
         .iter()
@@ -484,6 +490,14 @@ fn music_item(renderer: &Value) -> Option<YtTrack> {
         art_url,
         official_audio,
     })
+}
+
+/// Whether a subtitle run is the row's item kind rather than a name.
+fn is_music_kind(text: &str) -> bool {
+    matches!(
+        text,
+        "Song" | "Video" | "Single" | "EP" | "Album" | "Playlist" | "Artist" | "Podcast"
+    )
 }
 
 /// The texts of one flex column of a music row, with the " • " separators
@@ -836,6 +850,36 @@ mod tests {
         assert_eq!(items[1].album, "", "a view count is not an album");
         assert_eq!(items[1].duration_ms, 0, "a view count is not a duration");
         assert!(!items[1].official_audio);
+    }
+
+    #[test]
+    fn a_kind_led_subtitle_keeps_its_names() {
+        let response = json!({
+            "contents": { "musicShelfRenderer": { "contents": [
+                { "musicResponsiveListItemRenderer": {
+                    "flexColumns": [
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "Too Many Nights",
+                              "navigationEndpoint": { "watchEndpoint": { "videoId": "AAAAAAAAAAA" } } }
+                        ] } } },
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "Song" },
+                            { "text": " • " },
+                            { "text": "Metro Boomin" },
+                            { "text": " • " },
+                            { "text": "HEROES & VILLAINS" },
+                            { "text": " • " },
+                            { "text": "3:20" }
+                        ] } } }
+                    ]
+                } }
+            ] } } }
+        });
+        let items = music_items(&response);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].artists, "Metro Boomin");
+        assert_eq!(items[0].album, "HEROES & VILLAINS");
+        assert_eq!(items[0].duration_ms, 200_000);
     }
 
     #[test]
