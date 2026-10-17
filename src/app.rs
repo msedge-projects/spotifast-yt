@@ -12426,38 +12426,64 @@ impl App {
         }
     }
 
-    /// The backfill's answers: every named song keeps its real length.
+    /// The backfill's answers: every named song keeps its real length, in
+    /// the app's own store and in the rows on screen.
     fn apply_learned_durations(&mut self, found: Vec<(String, u64)>) {
-        let mut changed = 0usize;
+        let found_ms = |id: &str| found.iter().find(|(held, _)| held == id).map(|(_, ms)| *ms);
+        let mut stored = 0usize;
         for (id, ms) in &found {
             for track in &mut self.library_store.liked {
                 if &track.video_id == id && track.duration_ms == 0 {
                     track.duration_ms = *ms;
-                    changed += 1;
+                    stored += 1;
                 }
             }
             for playlist in &mut self.library_store.playlists {
                 for track in &mut playlist.tracks {
                     if &track.video_id == id && track.duration_ms == 0 {
                         track.duration_ms = *ms;
-                        changed += 1;
+                        stored += 1;
                     }
                 }
             }
         }
-        if changed == 0 {
+        // The rows just drawn: search answers and the artist shelf.
+        let mut shown = 0usize;
+        let mut patch = |tracks: &mut Vec<Track>| {
+            for track in tracks.iter_mut() {
+                if track.duration_ms == 0
+                    && let Some(id) = track.id.as_deref()
+                    && let Some(ms) = found_ms(id)
+                {
+                    track.duration_ms = ms.min(u64::from(u32::MAX)) as u32;
+                    shown += 1;
+                }
+            }
+        };
+        if let Loadable::Loaded(results) = &mut self.search.results
+            && let Some(page) = &mut results.tracks
+        {
+            patch(&mut page.items);
+        }
+        if let Some((_, tracks)) = &mut self.search.more_from {
+            patch(tracks);
+        }
+        if stored > 0 {
+            self.persist_local_library();
+            self.rebuild_local_liked();
+            self.rebuild_local_playlists();
+        }
+        let learned = stored + shown;
+        if learned == 0 {
             return;
         }
-        self.persist_local_library();
-        self.rebuild_local_liked();
-        self.rebuild_local_playlists();
         self.toast(
             gettext(
                 self.locale,
                 // Translators: {songs} is a count.
                 "Filled in {songs} song lengths",
             )
-            .replace("{songs}", &changed.to_string()),
+            .replace("{songs}", &learned.to_string()),
         );
     }
 
