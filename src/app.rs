@@ -7291,6 +7291,22 @@ impl App {
                                 .collect();
                             self.request_contains(uris);
                         }
+                        if self.youtube_mode {
+                            // The artist the results point at gets their
+                            // own rows under the shelves: a search of
+                            // their name answers them.
+                            self.search.more_from = None;
+                            self.search.more_from_waiting = None;
+                            if let Some(artist) =
+                                results.artists.as_ref().and_then(|page| page.items.first())
+                            {
+                                self.search.more_from_waiting =
+                                    Some((artist.id.clone(), artist.name.clone()));
+                                self.backend.api(ApiRequest::ArtistTopTracks {
+                                    id: artist.id.clone(),
+                                });
+                            }
+                        }
                         self.remember_search(&query);
                         self.search.results = Loadable::Loaded(results);
                         self.search.results_serial = serial;
@@ -7323,6 +7339,15 @@ impl App {
             }
             ApiResponse::ArtistTopTracks { id, result } => {
                 if let Ok(tracks) = &result {
+                    if self
+                        .search
+                        .more_from_waiting
+                        .as_ref()
+                        .is_some_and(|(waiting, _)| *waiting == id)
+                        && let Some((_, name)) = self.search.more_from_waiting.take()
+                    {
+                        self.search.more_from = Some((name, tracks.clone()));
+                    }
                     let uris: Vec<String> = tracks.iter().map(|track| track.uri.clone()).collect();
                     self.request_contains(uris);
                 }

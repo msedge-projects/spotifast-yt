@@ -736,6 +736,12 @@ pub struct SearchState {
     /// a prefix; the next query of the same run replaces it.
     pub typed_entry: Option<(u64, String)>,
     pub focus_requested: bool,
+    /// In YouTube mode: the artist the current results point at, with the
+    /// songs a follow-up search answered for them. The shelf under the
+    /// results draws these.
+    pub more_from: Option<(String, Vec<crate::api::models::Track>)>,
+    /// The artist whose shelf search is in flight: id and display name.
+    pub more_from_waiting: Option<(String, String)>,
 }
 
 #[derive(Default)]

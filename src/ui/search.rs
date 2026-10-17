@@ -332,6 +332,47 @@ fn all(app: &mut App, ui: &mut egui::Ui, results: &SearchResults) {
     shelf_albums(app, ui, results);
     shelf_playlists(app, ui, results);
     shelf_shows(app, ui, results);
+    // In YouTube mode, the artist the results point at gets their own
+    // rows under the shelves: the songs a search of their name answered.
+    if let Some((artist, tracks)) = &app.search.more_from {
+        let artist = artist.clone();
+        let tracks: Vec<crate::api::models::Track> = tracks.iter().take(5).cloned().collect();
+        if !tracks.is_empty() {
+            ui.add_space(8.0);
+            theme::section_title(ui, &palette, &artist);
+            ui.add_space(4.0);
+            let uris: Arc<[String]> = tracks
+                .iter()
+                .map(|track| track.uri.clone())
+                .collect::<Vec<_>>()
+                .into();
+            let context = RowContext::Uris(Arc::clone(&uris));
+            let items: Vec<PlayableItem> =
+                tracks.iter().cloned().map(PlayableItem::Track).collect();
+            for (index, item) in items.iter().enumerate() {
+                widgets::track_row(
+                    ui,
+                    app,
+                    TrackRow {
+                        index,
+                        number: None,
+                        item,
+                        context: &context,
+                        show_cover: true,
+                        show_album: false,
+                        added_at: None,
+                        added_by: None,
+                        show_added_by: false,
+                        compact: true,
+                        thin: false,
+                        shift: 0.0,
+                        picked: false,
+                        picked_songs: &[],
+                    },
+                );
+            }
+        }
+    }
     if results
         .episodes
         .as_ref()
