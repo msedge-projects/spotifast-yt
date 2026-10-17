@@ -5518,19 +5518,32 @@ impl Worker {
         tokio::spawn(async move {
             let mut found = Vec::new();
             let total = ids.len();
-            for (index, id) in ids.iter().enumerate() {
-                if let Ok(ms) = resolver.video_duration_ms(id).await {
-                    found.push((id.clone(), ms));
+            let mut index = 0usize;
+            while index < ids.len() {
+                // Three asks at a time keeps a burst short (a page of
+                // songs lands in seconds) without hammering anything.
+                let batch = &ids[index..(index + 3).min(ids.len())];
+                let mut handles = Vec::new();
+                for id in batch {
+                    let resolver = Arc::clone(&resolver);
+                    let id = id.clone();
+                    handles.push(tokio::spawn(async move {
+                        resolver.video_duration_ms(&id).await.map(|ms| (id, ms))
+                    }));
                 }
-                if index % 25 == 24 {
+                for handle in handles {
+                    if let Ok(Ok((id, ms))) = handle.await {
+                        found.push((id, ms));
+                    }
+                }
+                index += batch.len();
+                if index % 24 < 3 {
                     log::info!(
-                        "Lengths: {} of {} asked, {} answered",
-                        index + 1,
-                        total,
+                        "Lengths: {index} of {total} asked, {} answered",
                         found.len()
                     );
                 }
-                tokio::time::sleep(Duration::from_millis(300)).await;
+                tokio::time::sleep(Duration::from_millis(350)).await;
             }
             let _ = commands.send(Command::DurationsBackfilled { found });
             waker.wake();

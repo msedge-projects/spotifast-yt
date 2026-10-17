@@ -7323,6 +7323,24 @@ impl App {
                         self.remember_search(&query);
                         self.search.results = Loadable::Loaded(results);
                         self.search.results_serial = serial;
+                        if self.youtube_mode {
+                            // Fill the lengths of the rows just drawn that
+                            // YouTube's answer left out.
+                            let ids: Vec<String> = self
+                                .search
+                                .results
+                                .get()
+                                .and_then(|results| results.tracks.as_ref())
+                                .map(|page| {
+                                    page.items
+                                        .iter()
+                                        .filter(|track| track.duration_ms == 0)
+                                        .filter_map(|track| track.id.clone())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            self.request_missing_durations(ids.into_iter());
+                        }
                         if !self.youtube_mode {
                             self.show_search_playlists();
                         }
@@ -12214,6 +12232,14 @@ impl App {
         }
         let total = rows.len() as u32;
         self.library.liked.restore_cached(rows, total, None);
+        let missing: Vec<String> = self
+            .library_store
+            .liked
+            .iter()
+            .filter(|track| track.duration_ms == 0)
+            .map(|track| track.video_id.clone())
+            .collect();
+        self.request_missing_durations(missing.into_iter());
         self.rebuild_local_albums();
         self.rebuild_local_artists();
     }
@@ -12555,6 +12581,34 @@ impl App {
         let page = self.playlist_pages.entry(name.to_string()).or_default();
         page.playlist = Loadable::Loaded(header);
         page.items.restore_cached(rows, total, None);
+        let missing: Vec<String> = stored
+            .tracks
+            .iter()
+            .filter(|track| track.duration_ms == 0)
+            .map(|track| track.video_id.clone())
+            .collect();
+        // The rows just drawn are the ones worth asking about: their lengths
+        // land in seconds.
+        self.request_missing_durations(missing.into_iter());
+    }
+
+    /// Asks the player for the lengths of the songs just shown, capped so a
+    /// page fills in seconds without a burst.
+    fn request_missing_durations(&mut self, ids: impl Iterator<Item = String>) {
+        let mut wanted: Vec<String> = Vec::new();
+        for id in ids {
+            if !wanted.contains(&id) {
+                wanted.push(id);
+            }
+            if wanted.len() >= 60 {
+                break;
+            }
+        }
+        if wanted.is_empty() {
+            return;
+        }
+        self.backend
+            .send(Command::BackfillDurations { ids: wanted });
     }
 
     /// Creating a playlist in YouTube mode is the app's own business: the
