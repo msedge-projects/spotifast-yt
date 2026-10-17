@@ -11697,9 +11697,8 @@ impl App {
         let pending = self
             .any_play_pending()
             .then_some(Duration::from_millis(120));
-        let polling = self
-            .is_connected()
-            .then(|| self.connected_repaint_interval());
+        let polling =
+            (self.is_connected() && !self.youtube_mode).then(|| self.connected_repaint_interval());
         [playing, pending, polling].into_iter().flatten().min()
     }
 
@@ -11731,6 +11730,11 @@ impl App {
             self.listening = None;
             return;
         };
+        if now.duration_ms > 0 {
+            // The player learned the song's real length; the app's own
+            // library keeps it where it was missing.
+            self.learn_duration(&now.uri, now.duration_ms);
+        }
         let listening = match &mut self.listening {
             Some(held) if held.uri == now.uri => held,
             _ => {
@@ -12366,6 +12370,41 @@ impl App {
             self.files
                 .write(&path, text, fastframe_file::Access::Default);
         }
+    }
+
+    /// A played song's real length, learned from the player: kept in the
+    /// app's own library so tables stop showing a length YouTube never gave
+    /// the search. A known length is left alone, so this costs one pass per
+    /// song at most, and no requests at all.
+    fn learn_duration(&mut self, uri: &str, duration_ms: u32) {
+        let Some(video_id) = uri.strip_prefix("yt:") else {
+            return;
+        };
+        let mut changed = false;
+        if let Some(liked) = self
+            .library_store
+            .liked
+            .iter_mut()
+            .find(|track| track.video_id == video_id)
+            && liked.duration_ms == 0
+        {
+            liked.duration_ms = u64::from(duration_ms);
+            changed = true;
+        }
+        for playlist in &mut self.library_store.playlists {
+            for track in &mut playlist.tracks {
+                if track.video_id == video_id && track.duration_ms == 0 {
+                    track.duration_ms = u64::from(duration_ms);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            return;
+        }
+        self.persist_local_library();
+        self.rebuild_local_liked();
+        self.rebuild_local_playlists();
     }
 
     /// Fills the sidebar's Playlists list, and any open local playlist
