@@ -647,8 +647,15 @@ fn music_item(renderer: &Value) -> Option<YtTrack> {
     let subtitle = music_column_texts(columns, 1);
     let subtitle = music_subtitle(&subtitle);
     let artists = subtitle.artists;
-    let duration_ms = subtitle.duration_ms;
+    let mut duration_ms = subtitle.duration_ms;
     let album = subtitle.album;
+    if duration_ms == 0 {
+        // YouTube sometimes keeps the length in the row's fixed column
+        // (its right-aligned one) instead of the subtitle.
+        duration_ms = music_fixed_text(renderer)
+            .and_then(music_duration_ms)
+            .unwrap_or(0);
+    }
     let official_audio = renderer
         .get("flexColumns")
         .and_then(Value::as_array)
@@ -693,6 +700,23 @@ fn is_music_kind(text: &str) -> bool {
         text.trim(),
         "Song" | "Video" | "Single" | "EP" | "Album" | "Playlist" | "Artist" | "Podcast"
     )
+}
+
+/// The first text of a row's fixed column (its right-aligned one), where
+/// YouTube often keeps the length the subtitle left out.
+fn music_fixed_text(renderer: &Value) -> Option<&str> {
+    let text = renderer
+        .get("fixedColumns")?
+        .as_array()?
+        .first()?
+        .get("musicResponsiveListItemFixedColumnRenderer")?
+        .get("text")?;
+    text.get("runs")
+        .and_then(Value::as_array)
+        .and_then(|runs| runs.first())
+        .and_then(|run| run.get("text"))
+        .and_then(Value::as_str)
+        .or_else(|| text.get("text").and_then(Value::as_str))
 }
 
 /// The texts of one flex column of a music row, with empty runs dropped;
@@ -1566,6 +1590,34 @@ mod tests {
             playlists[0].art_url.as_deref(),
             Some("https://lh3.googleusercontent.com/p")
         );
+    }
+
+    #[test]
+    fn a_fixed_column_carries_the_length_the_subtitle_left_out() {
+        let response = json!({
+            "contents": { "musicShelfRenderer": { "contents": [
+                { "musicResponsiveListItemRenderer": {
+                    "flexColumns": [
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "Kalyani",
+                              "navigationEndpoint": { "watchEndpoint": { "videoId": "DDDDDDDDDDD" } } }
+                        ] } } },
+                        { "musicResponsiveListItemFlexColumnRenderer": { "text": { "runs": [
+                            { "text": "ARJN, KDS, FIFTY4 & Shreya Ghoshal" }
+                        ] } } }
+                    ],
+                    "fixedColumns": [
+                        { "musicResponsiveListItemFixedColumnRenderer": { "text": { "runs": [
+                            { "text": "4:12" }
+                        ] } } }
+                    ]
+                } }
+            ] } } }
+        );
+        let items = music_items(&response);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].artists, "ARJN, KDS, FIFTY4 & Shreya Ghoshal");
+        assert_eq!(items[0].duration_ms, 252_000);
     }
 
     #[test]

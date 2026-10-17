@@ -1655,8 +1655,12 @@ fn youtube_page<T>(items: Vec<T>) -> crate::api::models::Page<T> {
     }
 }
 
-/// A YouTube Music result page shaped like a Spotify search answer.
+/// A YouTube Music result page shaped like a Spotify search answer, with
+/// official audio leading: a music service ranks songs over the videos
+/// about them, and each group keeps the order YouTube gave it.
 fn youtube_results(tracks: Vec<crate::yt_resolver::YtTrack>) -> crate::api::models::SearchResults {
+    let mut tracks = tracks;
+    tracks.sort_by_key(|track| !track.official_audio);
     crate::api::models::SearchResults {
         tracks: Some(youtube_page(tracks.into_iter().map(youtube_row).collect())),
         ..Default::default()
