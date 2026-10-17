@@ -12425,10 +12425,28 @@ impl App {
             })
             .collect();
         let total = rows.len() as u32;
+        // The playlist's own cover is the art of its first song; the app
+        // owns this list, so the owner is simply you.
+        let mut images = Vec::new();
+        if let Some(url) = stored
+            .tracks
+            .first()
+            .and_then(|track| track.art_url.clone())
+        {
+            images.push(crate::api::models::Image {
+                url,
+                ..Default::default()
+            });
+        }
         let header = crate::api::models::Playlist {
             id: name.to_string(),
             name: name.to_string(),
             uri: format!("spotify:playlist:{name}"),
+            images,
+            owner: crate::api::models::Owner {
+                display_name: Some("You".to_string()),
+                ..Default::default()
+            },
             tracks: Some(crate::api::models::TrackCount { total }),
             ..Default::default()
         };
