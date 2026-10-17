@@ -454,6 +454,34 @@ impl NativeResolver {
         self.player(&video).await
     }
 
+    /// One video's own length, from its player response's details. Used to
+    /// fill lengths the search answer never carried.
+    pub async fn video_duration_ms(&self, video_id: &str) -> Result<u64> {
+        let player = self
+            .post(
+                PLAYER_URL,
+                CLIENT_ID,
+                CLIENT_VERSION,
+                None,
+                &json!({
+                    "context": { "client": self.client() },
+                    "videoId": video_id,
+                    "contentCheckOk": true,
+                    "racyCheckOk": true,
+                }),
+            )
+            .await
+            .context("the video was refused")?;
+        self.remember_visitor(&player);
+        let seconds = player
+            .get("videoDetails")
+            .and_then(|details| details.get("lengthSeconds"))
+            .and_then(Value::as_str)
+            .and_then(|text| text.parse::<u64>().ok())
+            .context("the video has no length")?;
+        Ok(seconds.saturating_mul(1000))
+    }
+
     /// One video's audio URL: the player request and the format pick, with
     /// one immediate retry. YouTube hands its "confirm you are not a bot"
     /// gate to the request, not to the client: the very next ask for the

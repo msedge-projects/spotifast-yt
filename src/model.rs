@@ -1229,6 +1229,8 @@ pub enum Action {
     /// Import the account's Spotify liked songs and playlists into the
     /// app's own library.
     ImportSpotify,
+    /// Fill the lengths the app's own library is missing.
+    BackfillDurations,
     SetLibraryByYou(bool),
     SetLibrarySort {
         shelf: crate::settings::LibraryShelf,

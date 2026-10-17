@@ -714,6 +714,15 @@ pub enum Command {
         liked: Vec<crate::yt_resolver::YtTrack>,
         playlists: Vec<(String, Vec<crate::yt_resolver::YtTrack>)>,
     },
+    /// The interface asked for the lengths its own library is missing: one
+    /// paced player request per named video.
+    BackfillDurations {
+        ids: Vec<String>,
+    },
+    /// Internal: the length backfill finished.
+    DurationsBackfilled {
+        found: Vec<(String, u64)>,
+    },
     /// Internal: a YouTube search in YouTube mode finished: its rows and
     /// the answer for the Search or PlaySearch request that asked.
     YtSearchDone {
@@ -904,6 +913,10 @@ pub enum Event {
     ImportDone {
         liked: Vec<crate::yt_resolver::YtTrack>,
         playlists: Vec<(String, Vec<crate::yt_resolver::YtTrack>)>,
+    },
+    /// The length backfill finished: every (video id, length) it found.
+    DurationsBackfilled {
+        found: Vec<(String, u64)>,
     },
     ProxyStorageFailed(crate::credentials::Error),
     ProxyApplied {
@@ -2679,6 +2692,11 @@ impl Worker {
                 Command::ImportSpotify => self.start_spotify_import(),
                 Command::SpotifyImportDone { liked, playlists } => {
                     self.finish_spotify_import(liked, playlists);
+                }
+                Command::BackfillDurations { ids } => self.start_duration_backfill(ids),
+                Command::DurationsBackfilled { found } => {
+                    log::info!("Lengths: {} filled", found.len());
+                    self.emit(Event::DurationsBackfilled { found });
                 }
                 Command::YtSearchDone {
                     query,
@@ -5481,6 +5499,42 @@ impl Worker {
             playlists.len()
         );
         self.emit(Event::ImportDone { liked, playlists });
+    }
+
+    /// Asks the player for every named video's own length, paced, and hands
+    /// the answers to the app's store.
+    fn start_duration_backfill(&mut self, ids: Vec<String>) {
+        if ids.is_empty() {
+            self.emit(Event::DurationsBackfilled { found: Vec::new() });
+            return;
+        }
+        let Some(resolver) = self.yt_search.clone() else {
+            self.emit(Event::Error("The YouTube client is not available".into()));
+            return;
+        };
+        log::info!("Lengths: filling {} songs", ids.len());
+        let commands = self.commands.clone();
+        let waker = self.waker.clone();
+        tokio::spawn(async move {
+            let mut found = Vec::new();
+            let total = ids.len();
+            for (index, id) in ids.iter().enumerate() {
+                if let Ok(ms) = resolver.video_duration_ms(id).await {
+                    found.push((id.clone(), ms));
+                }
+                if index % 25 == 24 {
+                    log::info!(
+                        "Lengths: {} of {} asked, {} answered",
+                        index + 1,
+                        total,
+                        found.len()
+                    );
+                }
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+            let _ = commands.send(Command::DurationsBackfilled { found });
+            waker.wake();
+        });
     }
 
     /// The metadata of a YouTube row the interface plays without having

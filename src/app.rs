@@ -2130,6 +2130,9 @@ impl App {
                 Event::ImportDone { liked, playlists } => {
                     self.apply_spotify_import(liked, playlists);
                 }
+                Event::DurationsBackfilled { found } => {
+                    self.apply_learned_durations(found);
+                }
                 Event::Playback(status) => self.handle_playback(status),
                 Event::NetworkStatus(reachable) => {
                     let became_reachable = !self.network_reachable && reachable;
@@ -3952,6 +3955,7 @@ impl App {
                 ControlCommand::Show => Some(Action::ShowWindow),
                 ControlCommand::ReloadThemes => Some(Action::ReloadThemes),
                 ControlCommand::ImportSpotify => Some(Action::ImportSpotify),
+                ControlCommand::BackfillDurations => Some(Action::BackfillDurations),
                 ControlCommand::PlayPause => Some(Action::TogglePlay),
                 ControlCommand::Play => (!playing).then_some(Action::TogglePlay),
                 ControlCommand::Pause => playing.then_some(Action::TogglePlay),
@@ -10384,6 +10388,30 @@ impl App {
                 ));
                 self.backend.send(Command::ImportSpotify);
             }
+            Action::BackfillDurations => {
+                let mut ids: Vec<String> = Vec::new();
+                for track in &self.library_store.liked {
+                    if track.duration_ms == 0 && !ids.contains(&track.video_id) {
+                        ids.push(track.video_id.clone());
+                    }
+                }
+                for playlist in &self.library_store.playlists {
+                    for track in &playlist.tracks {
+                        if track.duration_ms == 0 && !ids.contains(&track.video_id) {
+                            ids.push(track.video_id.clone());
+                        }
+                    }
+                }
+                self.toast(
+                    gettext(
+                        self.locale,
+                        // Translators: {songs} is a count.
+                        "Filling in {songs} song lengths, paced in the background",
+                    )
+                    .replace("{songs}", &ids.len().to_string()),
+                );
+                self.backend.send(Command::BackfillDurations { ids });
+            }
             Action::InsertInPlaylist {
                 playlist_id,
                 position,
@@ -12370,6 +12398,41 @@ impl App {
             self.files
                 .write(&path, text, fastframe_file::Access::Default);
         }
+    }
+
+    /// The backfill's answers: every named song keeps its real length.
+    fn apply_learned_durations(&mut self, found: Vec<(String, u64)>) {
+        let mut changed = 0usize;
+        for (id, ms) in &found {
+            for track in &mut self.library_store.liked {
+                if &track.video_id == id && track.duration_ms == 0 {
+                    track.duration_ms = *ms;
+                    changed += 1;
+                }
+            }
+            for playlist in &mut self.library_store.playlists {
+                for track in &mut playlist.tracks {
+                    if &track.video_id == id && track.duration_ms == 0 {
+                        track.duration_ms = *ms;
+                        changed += 1;
+                    }
+                }
+            }
+        }
+        if changed == 0 {
+            return;
+        }
+        self.persist_local_library();
+        self.rebuild_local_liked();
+        self.rebuild_local_playlists();
+        self.toast(
+            gettext(
+                self.locale,
+                // Translators: {songs} is a count.
+                "Filled in {songs} song lengths",
+            )
+            .replace("{songs}", &changed.to_string()),
+        );
     }
 
     /// A played song's real length, learned from the player: kept in the

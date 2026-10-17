@@ -165,6 +165,9 @@ enum Control {
     /// app's own library, matching each song on YouTube. Signs in to
     /// Spotify first when it needs to.
     ImportSpotify,
+    /// Fill the lengths the app's own library is missing, one paced player
+    /// request per song.
+    BackfillDurations,
 }
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -244,6 +247,7 @@ fn run_control(control: Control) -> i32 {
         Control::Show => "show".to_owned(),
         Control::ReloadThemes => "reload-themes".to_owned(),
         Control::ImportSpotify => "import-spotify".to_owned(),
+        Control::BackfillDurations => "backfill-durations".to_owned(),
     };
     let printed = match single_instance::send(&verb) {
         Ok(single_instance::Reply::Ok) => return 0,

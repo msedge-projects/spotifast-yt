@@ -91,6 +91,9 @@ pub enum ControlCommand {
     /// Import the account's Spotify liked songs and playlists into the
     /// app's own library, matching each song on YouTube.
     ImportSpotify,
+    /// Fill the lengths the app's own library is missing, one paced player
+    /// request per song.
+    BackfillDurations,
 }
 
 /// Marks this process as the running instance until dropped.
@@ -293,6 +296,7 @@ fn parse(line: &str) -> Option<Request> {
         ("show", None) => ControlCommand::Show,
         ("reload-themes", None) => ControlCommand::ReloadThemes,
         ("import-spotify", None) => ControlCommand::ImportSpotify,
+        ("backfill-durations", None) => ControlCommand::BackfillDurations,
         ("playpause", None) => ControlCommand::PlayPause,
         ("play", None) => ControlCommand::Play,
         ("pause", None) => ControlCommand::Pause,
