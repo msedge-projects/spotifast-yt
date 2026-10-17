@@ -4646,6 +4646,10 @@ impl App {
                 }
             }
             Page::Album(id) => {
+                if self.youtube_mode && self.local_album_known(&id) {
+                    self.fill_local_album(&id);
+                    return;
+                }
                 if !self.album_pages.contains_key(&id) {
                     self.load_generation = self.load_generation.wrapping_add(1);
                     self.album_pages.insert(
@@ -4666,6 +4670,10 @@ impl App {
                 }
             }
             Page::Artist(id) => {
+                if self.youtube_mode && self.local_artist_known(&id) {
+                    self.fill_local_artist(&id);
+                    return;
+                }
                 let page = self.artist_pages.entry(id.clone()).or_default();
                 if self.network_reachable {
                     if page.artist.needs_load() {
@@ -11719,6 +11727,8 @@ impl App {
             .record(crate::history::played_track(&now), jiff::Timestamp::now());
         self.plays.save(&self.files, &self.dirs.history_file());
         self.rebuild_recents();
+        self.rebuild_local_albums();
+        self.rebuild_local_artists();
     }
 
     #[cfg(target_os = "macos")]
@@ -12131,6 +12141,165 @@ impl App {
         }
         let total = rows.len() as u32;
         self.library.liked.restore_cached(rows, total, None);
+        self.rebuild_local_albums();
+        self.rebuild_local_artists();
+    }
+
+    /// The app's own songs of interest: liked, then recently played, each
+    /// once.
+    fn local_shelf_tracks(&self) -> Vec<Track> {
+        let mut tracks: Vec<Track> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for liked in &self.library_store.liked {
+            let row = liked.to_row();
+            if seen.insert(row.uri.clone()) {
+                tracks.push(row);
+            }
+        }
+        for play in self.plays.plays() {
+            if seen.insert(play.track.uri.clone()) {
+                tracks.push(play.track.clone());
+            }
+        }
+        tracks
+    }
+
+    /// The albums of the app's own songs, by name, in the order the songs
+    /// were liked or played.
+    fn local_album_groups(&self) -> Vec<(String, Option<String>, Vec<Track>)> {
+        let mut groups: Vec<(String, Option<String>, Vec<Track>)> = Vec::new();
+        for track in self.local_shelf_tracks() {
+            let Some(album) = track.album.as_ref() else {
+                continue;
+            };
+            let name = album.name.trim().to_string();
+            if name.is_empty() {
+                continue;
+            }
+            match groups.iter_mut().find(|(held, _, _)| *held == name) {
+                Some((_, _, rows)) => rows.push(track),
+                None => {
+                    let art = track.image(640).map(str::to_string);
+                    groups.push((name, art, vec![track]));
+                }
+            }
+        }
+        groups
+    }
+
+    /// The artists of the app's own songs, by name: a row's artist line is
+    /// split so each name is its own artist.
+    fn local_artist_groups(&self) -> Vec<(String, Option<String>, Vec<Track>)> {
+        let mut groups: Vec<(String, Option<String>, Vec<Track>)> = Vec::new();
+        for track in self.local_shelf_tracks() {
+            let art = track.image(640).map(str::to_string);
+            let names = split_artist_names(
+                &track
+                    .artists
+                    .iter()
+                    .map(|artist| artist.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            for name in names {
+                match groups.iter_mut().find(|(held, _, _)| *held == name) {
+                    Some((_, _, rows)) => rows.push(track.clone()),
+                    None => groups.push((name, art.clone(), vec![track.clone()])),
+                }
+            }
+        }
+        groups
+    }
+
+    /// Fills the Albums shelf, and any open local album pages, from the
+    /// app's own songs.
+    fn rebuild_local_albums(&mut self) {
+        let rows: Vec<crate::api::models::SavedAlbum> = self
+            .local_album_groups()
+            .into_iter()
+            .map(|(name, art, tracks)| crate::api::models::SavedAlbum {
+                added_at: None,
+                album: local_album_row(&name, art, &tracks),
+            })
+            .collect();
+        let total = rows.len() as u32;
+        self.library.albums.restore_cached(rows, total, None);
+        let open: Vec<String> = self
+            .album_pages
+            .keys()
+            .filter(|name| self.local_album_known(name))
+            .cloned()
+            .collect();
+        for name in open {
+            self.fill_local_album(&name);
+        }
+    }
+
+    /// Fills the Artists shelf, and any open local artist pages, from the
+    /// app's own songs.
+    fn rebuild_local_artists(&mut self) {
+        let rows: Vec<crate::api::models::Artist> = self
+            .local_artist_groups()
+            .into_iter()
+            .map(|(name, art, _)| local_artist_row(&name, art))
+            .collect();
+        self.library.artists.items = rows;
+        self.library.artists.loaded_once = true;
+        self.library.artists.complete = true;
+        self.library.artists.loading = false;
+        let open: Vec<String> = self
+            .artist_pages
+            .keys()
+            .filter(|name| self.local_artist_known(name))
+            .cloned()
+            .collect();
+        for name in open {
+            self.fill_local_artist(&name);
+        }
+    }
+
+    fn local_album_known(&self, name: &str) -> bool {
+        self.local_album_groups()
+            .iter()
+            .any(|(held, _, _)| held == name)
+    }
+
+    fn local_artist_known(&self, name: &str) -> bool {
+        self.local_artist_groups()
+            .iter()
+            .any(|(held, _, _)| held == name)
+    }
+
+    /// One of the app's own albums as a page: header and rows from its
+    /// songs, nothing asked of Spotify.
+    fn fill_local_album(&mut self, name: &str) {
+        let Some((_, art, rows)) = self
+            .local_album_groups()
+            .into_iter()
+            .find(|(held, _, _)| held == name)
+        else {
+            return;
+        };
+        let album = local_album_row(name, art, &rows);
+        let total = rows.len() as u32;
+        let page = self.album_pages.entry(name.to_string()).or_default();
+        page.album = Loadable::Loaded(album);
+        page.tracks.restore_cached(rows, total, None);
+    }
+
+    /// One of the app's own artists as a page: the artist and their songs
+    /// from the app's lists.
+    fn fill_local_artist(&mut self, name: &str) {
+        let Some((_, art, tracks)) = self
+            .local_artist_groups()
+            .into_iter()
+            .find(|(held, _, _)| held == name)
+        else {
+            return;
+        };
+        let page = self.artist_pages.entry(name.to_string()).or_default();
+        page.artist = Loadable::Loaded(local_artist_row(name, art));
+        page.top_tracks = Loadable::Loaded(tracks);
     }
 
     /// Liking in YouTube mode is the app's own business: the heart toggles,
@@ -12563,6 +12732,69 @@ fn local_load(request: &PlayRequest, shuffle: bool) -> LoadSpec {
 }
 
 /// A cached Web API track as the playback engine's own track metadata.
+/// The individual names in a row's artist line ("A, B & C").
+fn split_artist_names(line: &str) -> Vec<String> {
+    line.split(',')
+        .flat_map(|part| part.split(" & "))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// One derived album as the interface draws it; its id is its name, so its
+/// page can be filled from the app's own songs.
+fn local_album_row(name: &str, art: Option<String>, tracks: &[Track]) -> crate::api::models::Album {
+    let mut images = Vec::new();
+    if let Some(url) = art {
+        images.push(crate::api::models::Image {
+            url,
+            ..Default::default()
+        });
+    }
+    let artists = tracks
+        .first()
+        .map(|track| {
+            vec![crate::api::models::ArtistRef {
+                name: track
+                    .artists
+                    .iter()
+                    .map(|artist| artist.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                ..Default::default()
+            }]
+        })
+        .unwrap_or_default();
+    crate::api::models::Album {
+        id: name.to_string(),
+        name: name.to_string(),
+        uri: format!("spotify:album:{name}"),
+        album_type: Some("album".to_string()),
+        images,
+        artists,
+        ..Default::default()
+    }
+}
+
+/// One derived artist as the interface draws it; its id is its name.
+fn local_artist_row(name: &str, art: Option<String>) -> crate::api::models::Artist {
+    let mut images = Vec::new();
+    if let Some(url) = art {
+        images.push(crate::api::models::Image {
+            url,
+            ..Default::default()
+        });
+    }
+    crate::api::models::Artist {
+        id: name.to_string(),
+        name: name.to_string(),
+        uri: format!("spotify:artist:{name}"),
+        images,
+        ..Default::default()
+    }
+}
+
 /// The stored-library shape of a row: what a liked song keeps when the
 /// app's own library holds it.
 fn stored_track_of(
