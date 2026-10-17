@@ -12306,12 +12306,12 @@ impl App {
     /// the song enters or leaves the local store, and the file is written.
     fn set_saved_local(&mut self, uri: String, saved: bool) {
         self.set_saved_state(uri.clone(), saved);
-        if let Some(video_id) = uri.strip_prefix("yt:").map(str::to_string) {
-            if self.library_store.is_liked(&video_id) != saved {
-                let row = self.cached_track_anywhere(&uri);
-                let track = stored_track_of(&video_id, row.as_ref());
-                self.library_store.toggle_liked(&track);
-            }
+        if let Some(video_id) = uri.strip_prefix("yt:").map(str::to_string)
+            && self.library_store.is_liked(&video_id) != saved
+        {
+            let row = self.cached_track_anywhere(&uri);
+            let track = stored_track_of(&video_id, row.as_ref());
+            self.library_store.toggle_liked(&track);
         }
         self.persist_local_library();
         self.rebuild_local_liked();
