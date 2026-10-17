@@ -706,6 +706,14 @@ pub enum Command {
     /// The interface asked to run without a Spotify account: YouTube is
     /// the whole playback and no Spotify request goes out.
     YouTubeMode,
+    /// The interface asked for the one-time Spotify import: the account's
+    /// liked songs and playlists, matched on YouTube and kept locally.
+    ImportSpotify,
+    /// Internal: the one-time Spotify import finished.
+    SpotifyImportDone {
+        liked: Vec<crate::yt_resolver::YtTrack>,
+        playlists: Vec<(String, Vec<crate::yt_resolver::YtTrack>)>,
+    },
     /// Internal: a YouTube search in YouTube mode finished: its rows and
     /// the answer for the Search or PlaySearch request that asked.
     YtSearchDone {
@@ -891,6 +899,12 @@ pub enum Event {
         password: Option<crate::credentials::ProxyPassword>,
     },
     ProxyPasswordStored,
+    /// The one-time Spotify import finished: the liked songs it matched,
+    /// and the playlists it rebuilt under their own names.
+    ImportDone {
+        liked: Vec<crate::yt_resolver::YtTrack>,
+        playlists: Vec<(String, Vec<crate::yt_resolver::YtTrack>)>,
+    },
     ProxyStorageFailed(crate::credentials::Error),
     ProxyApplied {
         request: u64,
@@ -1753,6 +1767,145 @@ mod youtube_result_tests {
     }
 }
 
+/// The one-time Spotify import: liked songs, then the account's own
+/// playlists, each song matched with one paced YouTube search.
+async fn spotify_import(
+    api: Arc<ApiGateway>,
+    resolver: Arc<crate::yt_resolver::NativeResolver>,
+) -> (
+    Vec<crate::yt_resolver::YtTrack>,
+    Vec<(String, Vec<crate::yt_resolver::YtTrack>)>,
+) {
+    let mut liked = Vec::new();
+    let mut offset = 0u32;
+    loop {
+        let client = match api.client_for(Operation::UserData).await {
+            Ok(client) => client,
+            Err(error) => {
+                log::warn!("Spotify import: liked songs are unavailable: {error}");
+                break;
+            }
+        };
+        let page = match client.saved_tracks(offset, 50).await {
+            Ok(page) => page,
+            Err(error) => {
+                log::warn!("Spotify import: liked songs at {offset} failed: {error}");
+                break;
+            }
+        };
+        let count = page.items.len();
+        for saved in &page.items {
+            if let Some(track) = match_track(&resolver, &saved.track).await {
+                liked.push(track);
+            }
+        }
+        log::info!("Spotify import: {} liked songs matched so far", liked.len());
+        offset += count as u32;
+        if count == 0 || page.next_offset().is_none() {
+            break;
+        }
+    }
+
+    let mut playlists = Vec::new();
+    let mut offset = 0u32;
+    loop {
+        let client = match api.client_for(Operation::PlaylistLibrary).await {
+            Ok(client) => client,
+            Err(error) => {
+                log::warn!("Spotify import: the playlists are unavailable: {error}");
+                break;
+            }
+        };
+        let page = match client.my_playlists(offset, 50).await {
+            Ok(page) => page,
+            Err(error) => {
+                log::warn!("Spotify import: the playlists at {offset} failed: {error}");
+                break;
+            }
+        };
+        let count = page.items.len();
+        for playlist in &page.items {
+            let name = playlist.name.clone();
+            log::info!("Spotify import: reading \u{201c}{name}\u{201d}");
+            let mut tracks = Vec::new();
+            let mut row = 0u32;
+            loop {
+                let client = match api
+                    .client_for(Operation::PlaylistItems(
+                        crate::api::gateway::PlaylistAccess::Unknown,
+                    ))
+                    .await
+                {
+                    Ok(client) => client,
+                    Err(error) => {
+                        log::warn!(
+                            "Spotify import: \u{201c}{name}\u{201d} is unavailable: {error}"
+                        );
+                        break;
+                    }
+                };
+                let items = match client.playlist_items(&playlist.id, row, 100).await {
+                    Ok(items) => items,
+                    Err(error) => {
+                        log::warn!(
+                            "Spotify import: \u{201c}{name}\u{201d} at {row} failed: {error}"
+                        );
+                        break;
+                    }
+                };
+                let rows = items.items.len();
+                for item in &items.items {
+                    if let Some(crate::api::models::PlayableItem::Track(track)) = item.playable()
+                        && let Some(matched) = match_track(&resolver, track).await
+                    {
+                        tracks.push(matched);
+                    }
+                }
+                row += rows as u32;
+                if rows == 0 || items.next_offset().is_none() {
+                    break;
+                }
+            }
+            log::info!(
+                "Spotify import: \u{201c}{name}\u{201d} answered {} matched songs",
+                tracks.len()
+            );
+            if !tracks.is_empty() {
+                playlists.push((name, tracks));
+            }
+        }
+        offset += count as u32;
+        if count == 0 || page.next_offset().is_none() {
+            break;
+        }
+    }
+    (liked, playlists)
+}
+
+/// One Spotify track matched on YouTube: the first official audio answer
+/// for its name, else the first answer at all. Paced, so a library of any
+/// size is read politely.
+async fn match_track(
+    resolver: &crate::yt_resolver::NativeResolver,
+    track: &crate::api::models::Track,
+) -> Option<crate::yt_resolver::YtTrack> {
+    let query = format!("{} {}", track.name, track.artist_names());
+    let found = match resolver.search_music(&query).await {
+        Ok(found) => found,
+        Err(error) => {
+            log::warn!("Spotify import: \u{201c}{query}\u{201d} did not match: {error}");
+            return None;
+        }
+    };
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    found
+        .tracks
+        .iter()
+        .find(|track| track.official_audio)
+        .or_else(|| found.tracks.first())
+        .cloned()
+}
+
 struct Worker {
     dirs: AppDirs,
     credentials: CredentialStore,
@@ -1839,6 +1992,10 @@ struct Worker {
     yt_playlist_header_waiting: Option<(String, u64)>,
     /// The playlist-items request waiting on a browse: id, offset, generation.
     yt_playlist_tracks_waiting: Option<(String, u32, u64)>,
+    /// The one-time Spotify import waits for a sign-in before it starts.
+    import_pending: bool,
+    /// The one-time Spotify import is reading and matching right now.
+    import_running: bool,
     /// The plan, once the Web API has answered.
     premium: Option<bool>,
     cancel_signin: Option<watch::Sender<bool>>,
@@ -1933,6 +2090,8 @@ impl Worker {
             yt_playlist_browsing: std::collections::HashSet::new(),
             yt_playlist_header_waiting: None,
             yt_playlist_tracks_waiting: None,
+            import_pending: false,
+            import_running: false,
             premium: None,
             cancel_signin: None,
             authorizing_source: None,
@@ -2517,6 +2676,10 @@ impl Worker {
                     }
                 }
                 Command::YouTubeMode => self.enter_youtube_mode(),
+                Command::ImportSpotify => self.start_spotify_import(),
+                Command::SpotifyImportDone { liked, playlists } => {
+                    self.finish_spotify_import(liked, playlists);
+                }
                 Command::YtSearchDone {
                     query,
                     serial,
@@ -3141,6 +3304,11 @@ impl Worker {
                     self.on_account_checked(premium);
                 }
             }
+        }
+        if self.import_pending && source == ApiSource::Shared {
+            // The one-time import waited for this sign-in.
+            self.import_pending = false;
+            self.start_spotify_import();
         }
         self.finish_authorization(source);
     }
@@ -5244,6 +5412,55 @@ impl Worker {
             offset,
             result,
         })));
+    }
+
+    /// The one-time Spotify import: signs in once if needed, then reads
+    /// the account's liked songs and playlists and matches them on
+    /// YouTube. The songs reach the app's own library when it finishes.
+    fn start_spotify_import(&mut self) {
+        if self.import_running {
+            self.emit(Event::Error("A Spotify import is already running".into()));
+            return;
+        }
+        if !self.signed_in {
+            self.import_pending = true;
+            self.emit(Event::Error(
+                "Signing in to Spotify to import; approve it in your browser".into(),
+            ));
+            self.sign_in_source(ApiSource::Shared);
+            return;
+        }
+        let Some(resolver) = self.yt_search.clone() else {
+            self.emit(Event::Error(
+                "The YouTube search client is not available".into(),
+            ));
+            return;
+        };
+        self.import_running = true;
+        log::info!("Spotify import: reading the account's library");
+        let api = Arc::clone(&self.api);
+        let commands = self.commands.clone();
+        let waker = self.waker.clone();
+        tokio::spawn(async move {
+            let (liked, playlists) = spotify_import(api, resolver).await;
+            let _ = commands.send(Command::SpotifyImportDone { liked, playlists });
+            waker.wake();
+        });
+    }
+
+    /// The import finished: the app takes the rows into its own library.
+    fn finish_spotify_import(
+        &mut self,
+        liked: Vec<crate::yt_resolver::YtTrack>,
+        playlists: Vec<(String, Vec<crate::yt_resolver::YtTrack>)>,
+    ) {
+        self.import_running = false;
+        log::info!(
+            "Spotify import: {} liked songs and {} playlists matched",
+            liked.len(),
+            playlists.len()
+        );
+        self.emit(Event::ImportDone { liked, playlists });
     }
 
     /// The metadata of a YouTube row the interface plays without having

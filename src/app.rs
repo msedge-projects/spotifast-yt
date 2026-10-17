@@ -2127,6 +2127,9 @@ impl App {
                     self.cover_chosen(&id, request, result);
                 }
                 Event::Auth(status) => self.handle_auth(status),
+                Event::ImportDone { liked, playlists } => {
+                    self.apply_spotify_import(liked, playlists);
+                }
                 Event::Playback(status) => self.handle_playback(status),
                 Event::NetworkStatus(reachable) => {
                     let became_reachable = !self.network_reachable && reachable;
@@ -3948,6 +3951,7 @@ impl App {
             let action = match command {
                 ControlCommand::Show => Some(Action::ShowWindow),
                 ControlCommand::ReloadThemes => Some(Action::ReloadThemes),
+                ControlCommand::ImportSpotify => Some(Action::ImportSpotify),
                 ControlCommand::PlayPause => Some(Action::TogglePlay),
                 ControlCommand::Play => (!playing).then_some(Action::TogglePlay),
                 ControlCommand::Pause => playing.then_some(Action::TogglePlay),
@@ -10368,6 +10372,13 @@ impl App {
                     self.request_playlist_add(playlist_id, playlist_name, items, None);
                 }
             }
+            Action::ImportSpotify => {
+                self.toast(gettext(
+                    self.locale,
+                    "Importing from Spotify; approve the sign-in in your browser the first time",
+                ));
+                self.backend.send(Command::ImportSpotify);
+            }
             Action::InsertInPlaylist {
                 playlist_id,
                 position,
@@ -12458,6 +12469,44 @@ impl App {
             self.persist_local_library();
             self.rebuild_local_playlists();
         }
+    }
+
+    /// The one-time import answered: the songs it matched enter the app's
+    /// own library, playlists keep their names, and everything is written.
+    fn apply_spotify_import(
+        &mut self,
+        liked: Vec<crate::yt_resolver::YtTrack>,
+        playlists: Vec<(String, Vec<crate::yt_resolver::YtTrack>)>,
+    ) {
+        let mut songs = 0usize;
+        for track in liked {
+            if !self.library_store.is_liked(&track.video_id) {
+                self.library_store.toggle_liked(&track);
+                songs += 1;
+            }
+        }
+        let mut lists = 0usize;
+        for (name, tracks) in playlists {
+            let fresh = self.library_store.add_playlist(&name);
+            if fresh {
+                lists += 1;
+                for track in tracks {
+                    self.library_store.add_to_playlist(&name, &track);
+                }
+            }
+        }
+        self.persist_local_library();
+        self.rebuild_local_liked();
+        self.rebuild_local_playlists();
+        self.toast(
+            gettext(
+                self.locale,
+                // Translators: {songs} and {playlists} are counts.
+                "Imported {songs} songs and {playlists} playlists from Spotify",
+            )
+            .replace("{songs}", &songs.to_string())
+            .replace("{playlists}", &lists.to_string()),
+        );
     }
 
     /// Whether Liked Songs at `revision` is a prefix of the rows shown now.

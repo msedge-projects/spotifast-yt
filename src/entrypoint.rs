@@ -161,6 +161,10 @@ enum Control {
     Show,
     /// Reload local palette files without starting the app or interrupting playback
     ReloadThemes,
+    /// Import the account's Spotify liked songs and playlists into the
+    /// app's own library, matching each song on YouTube. Signs in to
+    /// Spotify first when it needs to.
+    ImportSpotify,
 }
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -239,6 +243,7 @@ fn run_control(control: Control) -> i32 {
         Control::NowPlaying { .. } => "nowplaying".to_owned(),
         Control::Show => "show".to_owned(),
         Control::ReloadThemes => "reload-themes".to_owned(),
+        Control::ImportSpotify => "import-spotify".to_owned(),
     };
     let printed = match single_instance::send(&verb) {
         Ok(single_instance::Reply::Ok) => return 0,

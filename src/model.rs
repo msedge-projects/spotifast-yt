@@ -1226,6 +1226,9 @@ pub enum Action {
     OpenThemesFolder,
     SetCustomTheme(String),
     ReloadThemes,
+    /// Import the account's Spotify liked songs and playlists into the
+    /// app's own library.
+    ImportSpotify,
     SetLibraryByYou(bool),
     SetLibrarySort {
         shelf: crate::settings::LibraryShelf,

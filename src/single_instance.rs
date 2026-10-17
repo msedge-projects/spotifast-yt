@@ -88,6 +88,9 @@ pub enum ControlCommand {
     /// Refresh the device list. Sent by the `devices` read, which answers
     /// from a snapshot that is only as fresh as the app's last look.
     RefreshDevices,
+    /// Import the account's Spotify liked songs and playlists into the
+    /// app's own library, matching each song on YouTube.
+    ImportSpotify,
 }
 
 /// Marks this process as the running instance until dropped.
@@ -289,6 +292,7 @@ fn parse(line: &str) -> Option<Request> {
     let command = match (verb, argument) {
         ("show", None) => ControlCommand::Show,
         ("reload-themes", None) => ControlCommand::ReloadThemes,
+        ("import-spotify", None) => ControlCommand::ImportSpotify,
         ("playpause", None) => ControlCommand::PlayPause,
         ("play", None) => ControlCommand::Play,
         ("pause", None) => ControlCommand::Pause,
