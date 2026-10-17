@@ -6024,6 +6024,11 @@ impl App {
         match response {
             ApiResponse::Me(result) => match result {
                 Ok(user) => {
+                    if self.youtube_mode {
+                        // The one-time import's sign-in is not a session to
+                        // switch the interface's playback plan by.
+                        return;
+                    }
                     // Free accounts play through the YouTube engine, so
                     // the "playback needs Premium" notice would be wrong.
                     // Premium accounts keep the librespot engine.

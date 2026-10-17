@@ -3527,11 +3527,23 @@ impl Worker {
     fn enter_youtube_mode(&mut self) {
         self.youtube_mode = true;
         self.signed_in = true;
+        self.premium = Some(false);
         match crate::yt_resolver::NativeResolver::new() {
             Ok(resolver) => self.yt_search = Some(Arc::new(resolver)),
             Err(error) => log::warn!("YouTube search is unavailable: {error:#}"),
         }
-        self.on_account_checked(Some(false));
+        // The YouTube engine starts now. A Spotify account check (the
+        // one-time import's sign-in, for one) must not flip the plan or
+        // bring librespot into the picture, so the free-account setup
+        // runs here directly instead of through on_account_checked.
+        self.album_type_lookup.clear_engine_work();
+        self.playlist_header_lookup.clear_engine_work();
+        self.carry_volume();
+        if let Some(engine) = self.engine.take() {
+            engine.shutdown();
+        }
+        self.pending_playback_grant = None;
+        self.resume_engine();
     }
 
     // ---- local playback engine -------------------------------------------
@@ -4172,6 +4184,12 @@ impl Worker {
     /// 0.8 calls `exit(1)` for Free accounts, which cannot be caught, so it
     /// must never be connected for one.
     fn on_account_checked(&mut self, premium: Option<bool>) {
+        if self.youtube_mode {
+            // YouTube mode answers for its own engine: a Spotify account
+            // check (a one-time import's sign-in, for one) must not flip
+            // the playback plan.
+            return;
+        }
         self.premium = premium;
         if premium == Some(false) {
             self.album_type_lookup.clear_engine_work();
@@ -5422,7 +5440,9 @@ impl Worker {
             self.emit(Event::Error("A Spotify import is already running".into()));
             return;
         }
-        if !self.signed_in {
+        if !self.signed_in || self.api.account().is_none() {
+            // YouTube mode keeps the worker's own flag true without any
+            // Spotify session; the import needs a real one.
             self.import_pending = true;
             self.emit(Event::Error(
                 "Signing in to Spotify to import; approve it in your browser".into(),
