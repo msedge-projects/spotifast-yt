@@ -1651,7 +1651,13 @@ mod tests {
 
     #[test]
     fn the_first_size_is_a_whole_multiple_of_the_skin() {
+        // With no custom skin worn the glass player is the window, and it
+        // is sized in logical points.
         let mut settings = crate::settings::Settings::default();
+        assert_eq!(initial_size(&settings), super::super::glass::window_size(&settings));
+
+        // A worn skin keeps the classic window: whole skin pixels.
+        settings.skin = Some("Zaxon".into());
         assert_eq!(initial_size(&settings), vec2(550.0, 232.0));
         settings.skin_scale = Some(1);
         assert_eq!(initial_size(&settings), vec2(275.0, 116.0));
