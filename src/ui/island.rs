@@ -420,9 +420,7 @@ fn paint(app: &mut App, ui: &mut Ui, window: Rect, now: f64) {
     let local = box_rect(appear, p, gather, open);
     let rect = local.translate(window.min.to_vec2());
     let palette = app.palette;
-    let painter = ui.painter().with_clip_rect(window);
 
-    let ink = palette.text;
     let hairline = if palette.dark {
         Color32::from_white_alpha(26)
     } else {
@@ -433,7 +431,6 @@ fn paint(app: &mut App, ui: &mut Ui, window: Rect, now: f64) {
     } else {
         Color32::from_rgba_unmultiplied(250, 250, 250, 232)
     };
-    let _ = &painter;
     let fade = |c: Color32| c.gamma_multiply(clamp01(appear));
 
     // The one thing to press to change shape, before the controls so a
@@ -529,10 +526,11 @@ fn paint_words(app: &mut App, ui: &Ui, rect: Rect, p: f32) {
     );
     // Centred by the sleeve: the words' box is the sleeve's height, and
     // the two lines centre inside that.
-    let total = title.size().y + 2.0 + by.size().y;
+    let title_h = title.size().y;
+    let total = title_h + 2.0 + by.size().y;
     let top = rect.top() + PAD + (art_s - total) / 2.0;
     painter.galley(pos2(left, top), title, palette.text);
-    painter.galley(pos2(left, top + title.size().y + 2.0), by, palette.secondary);
+    painter.galley(pos2(left, top + title_h + 2.0), by, palette.secondary);
 }
 
 /// The track: a rail along the foot of the bar, the times arriving on
@@ -666,7 +664,7 @@ fn paint_transport(app: &mut App, ui: &mut Ui, rect: Rect, p: f32, now: f64) {
 }
 
 /// The heart, and the beat when the like lands.
-fn paint_heart(app: &mut App, ui: &mut Ui, rect: Rect, p: f32, late: f32, now: f64) {
+fn paint_heart(app: &mut App, ui: &mut Ui, rect: Rect, _p: f32, late: f32, now: f64) {
     let Some(now_playing) = app.now_playing() else {
         return;
     };
