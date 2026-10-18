@@ -1,15 +1,22 @@
 //! A resolved stream URL read over HTTP ranges as a symphonia source.
 //!
-//! Symphonia drives this like an ordinary seekable file. Reads pull the
-//! body forward; seeks drop it and ask googlevideo for a later range (the
-//! server serves ranged requests; mpv seeks the same way). A server that
-//! ignores a range request is absorbed by discarding the bytes from the
-//! start, so callers never see wrong data. Failures carry a [`LinkFailure`]
-//! so the engine can tell an expired link (a fresh resolve helps) from a
-//! bad connection (a retry might).
+//! Symphonia drives this like an ordinary seekable file, but the wire
+//! behavior is the CDN's: googlevideo delivers a few-megabyte audio stream
+//! in a fast opening burst and punishes consumers that read at playback
+//! pace (measured: a stream read on demand stalls after a hundred-odd
+//! milliseconds of sound; the same URL drained eagerly arrives whole).
+//! So each request hands its body to a background fetcher that drains it
+//! at full speed into a buffer, the reader's position lives in that
+//! buffer, and seeks inside the fetched window are free; only a seek
+//! before the window starts a fresh ranged burst. The demuxer's index
+//! search, which seeks in tight little jumps, costs nothing on the wire.
+//! Failures carry a [`LinkFailure`] so the engine can tell an expired
+//! link (a fresh resolve helps) from a bad connection (a retry might).
 
 use std::io::{self, Read, Seek, SeekFrom};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::thread;
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -20,15 +27,27 @@ use symphonia::core::io::MediaSource;
 /// How long the connection setup may take before a request gives up.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a read may wait for the fetcher before the stream counts as
+/// stalled. The blocking client has no read timeout of its own, so the
+/// buffer's wait is where a dead connection is caught.
+#[cfg(not(test))]
+const STALL_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const STALL_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// The most sound the fetcher keeps ahead of the reader, so a stream
+/// longer than memory allows still streams.
+const BUFFER_AHEAD: usize = 16 * 1024 * 1024;
+
+/// Bytes fetched per read.
+const FETCH_BLOCK: usize = 64 * 1024;
+
 /// What the request names itself as. googlevideo serves a stalled, empty
 /// answer to ranged requests without one (verified against a fresh URL
 /// with curl: headers, then nothing), and reqwest sends no user agent by
 /// default; this is the identity yt-dlp uses, which googlevideo serves.
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) \
      Chrome/124.0.0.0 Safari/537.36";
-
-/// Bytes discarded per read while absorbing a range-ignoring server.
-const SKIP_CHUNK: usize = 32 * 1024;
 
 /// Why a link failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,9 +89,8 @@ fn link(kind: LinkFailure, detail: String) -> io::Error {
 
 /// A resolved stream URL read over HTTP ranges.
 ///
-/// One pooled client per source keeps seek connections cheap (they are the
-/// dominant cost of a seek); the open body is dropped on a seek and the
-/// next read opens a fresh ranged request at the target.
+/// One pooled client per source; each request's body is drained by its own
+/// fetcher thread into a buffer the reader seeks and reads through.
 pub struct RangeSource {
     client: Client,
     url: String,
@@ -80,20 +98,60 @@ pub struct RangeSource {
 }
 
 struct Inner {
-    /// Logical position in the stream: where the next read starts.
-    pos: u64,
     /// The total length once known (resolver, Content-Range, or
     /// Content-Length).
     len: Option<u64>,
-    /// Bodies already reported (their first returned bytes); reset per
-    /// body, for the debug trace.
+    /// The open body's buffered sound and its fetcher.
+    feed: Option<Feed>,
+    /// Where the next request opens when no feed is held.
+    open_at: u64,
+}
+
+/// A body being drained in the background.
+struct Feed {
+    state: Arc<FeedState>,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Feed {
+    /// Asks the fetcher to stop; it exits at its next block boundary (or
+    /// when its connection finally errors).
+    fn stop(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        let _data = self
+            .state
+            .data
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.state.ready.notify_all();
+    }
+}
+
+struct FeedState {
+    data: Mutex<FeedData>,
+    ready: Condvar,
+}
+
+struct FeedData {
+    /// The file offset of `buf`'s first byte (0 for a whole-file answer).
+    start: u64,
+    /// Bytes fetched and not yet discarded.
+    buf: Vec<u8>,
+    /// The reader's logical position in the file.
+    pos: u64,
+    /// The fetch finished; `failed` says why not.
+    done: bool,
+    failed: Option<(LinkFailure, String)>,
+    /// Whether the body's first bytes were traced.
     head_logged: bool,
-    /// The open response body, opened lazily at `pos`.
-    body: Option<Response>,
-    /// Bytes that a range-ignoring server sent from the start of the file
-    /// and that still have to be discarded before the logical position is
-    /// reached.
-    pending_skip: u64,
+}
+
+impl FeedData {
+    /// How much of the fetched window the reader has already passed.
+    fn consumed(&self) -> usize {
+        let consumed = self.pos.saturating_sub(self.start);
+        (consumed.min(self.buf.len() as u64)) as usize
+    }
 }
 
 impl RangeSource {
@@ -104,9 +162,7 @@ impl RangeSource {
             .connect_timeout(CONNECT_TIMEOUT)
             .user_agent(USER_AGENT)
             // The shape mpv streams with; googlevideo's HTTP/2 handling
-            // drops slow bodies where HTTP/1.1 streams steadily. (A body
-            // stall ceiling belongs to the engine's renewal work: the
-            // blocking builder has no read timeout.)
+            // drops slow bodies where HTTP/1.1 streams steadily.
             .http1_only()
             .build()
             .map_err(|error| link(LinkFailure::Transport, format!("HTTP client: {error}")))?;
@@ -114,11 +170,9 @@ impl RangeSource {
             client,
             url: url.into(),
             inner: Mutex::new(Inner {
-                pos: 0,
                 len,
-                head_logged: false,
-                body: None,
-                pending_skip: 0,
+                feed: None,
+                open_at: 0,
             }),
         })
     }
@@ -128,9 +182,9 @@ impl RangeSource {
     pub fn open(&self) -> io::Result<()> {
         let mut guard = self.lock();
         let inner = &mut *guard;
-        if inner.body.is_none() {
-            let pos = inner.pos;
-            self.request(inner, pos)?;
+        if inner.feed.is_none() {
+            let at = inner.open_at;
+            self.request(inner, at)?;
         }
         Ok(())
     }
@@ -139,7 +193,8 @@ impl RangeSource {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Issues one ranged request at `start` and keeps its body.
+    /// Issues one ranged request at `start` and hands its body to a
+    /// fetcher; the reader's position begins at `start` either way.
     fn request(&self, inner: &mut Inner, start: u64) -> io::Result<()> {
         // A ranged read, even from the start: a plain GET is the shape
         // googlevideo throttles and sometimes drops. The range travels as
@@ -180,12 +235,126 @@ impl RangeSource {
         } else if whole_file && let Some(length) = content_length(response.headers()) {
             inner.len = Some(length);
         }
-        inner.pos = start;
-        inner.pending_skip = if whole_file { start } else { 0 };
-        inner.head_logged = false;
-        inner.body = Some(response);
+        // A whole-file answer starts at byte zero however the request
+        // asked; a ranged answer starts where it was asked from.
+        let feed_start = if whole_file { 0 } else { start };
+        if let Some(feed) = inner.feed.take() {
+            feed.stop();
+        }
+        inner.open_at = start;
+        inner.feed = Some(spawn_fetcher(response, feed_start, start));
         Ok(())
     }
+}
+
+impl Drop for RangeSource {
+    fn drop(&mut self) {
+        if let Some(feed) = self.lock().feed.take() {
+            feed.stop();
+        }
+    }
+}
+
+/// Starts the body's background drain.
+fn spawn_fetcher(mut response: Response, feed_start: u64, reader_at: u64) -> Feed {
+    let state = Arc::new(FeedState {
+        data: Mutex::new(FeedData {
+            start: feed_start,
+            buf: Vec::new(),
+            pos: reader_at,
+            done: false,
+            failed: None,
+            head_logged: false,
+        }),
+        ready: Condvar::new(),
+    });
+    let cancel = Arc::new(AtomicBool::new(false));
+    let fetch_state = Arc::clone(&state);
+    let fetch_cancel = Arc::clone(&cancel);
+    let spawned = thread::Builder::new()
+        .name("yt-fetch".to_string())
+        .spawn(move || {
+            let mut block = vec![0u8; FETCH_BLOCK];
+            loop {
+                if fetch_cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                // Keep no more than `BUFFER_AHEAD` ahead of the reader.
+                {
+                    let mut data = fetch_state
+                        .data
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    while data.buf.len().saturating_sub(data.consumed()) > BUFFER_AHEAD
+                        && !fetch_cancel.load(Ordering::Relaxed)
+                    {
+                        data = fetch_state
+                            .ready
+                            .wait(data)
+                            .unwrap_or_else(PoisonError::into_inner);
+                    }
+                    if fetch_cancel.load(Ordering::Relaxed) {
+                        return;
+                    }
+                }
+                match response.read(&mut block) {
+                    Ok(0) => {
+                        let mut data = fetch_state
+                            .data
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner);
+                        data.done = true;
+                        fetch_state.ready.notify_all();
+                        return;
+                    }
+                    Ok(read) => {
+                        let mut data = fetch_state
+                            .data
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner);
+                        // Drop what the reader has passed before adding
+                        // more, so a long stream does not grow forever.
+                        let consumed = data.consumed();
+                        if consumed == data.buf.len() {
+                            data.buf.clear();
+                            data.start += consumed as u64;
+                        } else if consumed > BUFFER_AHEAD / 2 {
+                            data.buf.drain(..consumed);
+                            data.start += consumed as u64;
+                        }
+                        if !data.head_logged {
+                            data.head_logged = true;
+                            let head: Vec<String> = block[..read.min(16)]
+                                .iter()
+                                .map(|byte| format!("{byte:02x}"))
+                                .collect();
+                            log::debug!("yt_audio: the body's first bytes are {}", head.join(" "));
+                        }
+                        data.buf.extend_from_slice(&block[..read]);
+                        drop(data);
+                        fetch_state.ready.notify_all();
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(error) => {
+                        let mut data = fetch_state
+                            .data
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner);
+                        data.done = true;
+                        data.failed =
+                            Some((LinkFailure::Transport, format!("read failed: {error}")));
+                        fetch_state.ready.notify_all();
+                        return;
+                    }
+                }
+            }
+        });
+    if let Err(error) = &spawned {
+        // A thread that cannot start leaves the feed to fail on first
+        // read, which is where the caller is waiting anyway.
+        log::warn!("yt_audio: fetcher did not start: {error}");
+    }
+    Feed { state, cancel }
 }
 
 impl Read for RangeSource {
@@ -196,55 +365,60 @@ impl Read for RangeSource {
         loop {
             let mut guard = self.lock();
             let inner = &mut *guard;
-            if inner.body.is_none() {
-                let pos = inner.pos;
-                self.request(inner, pos)?;
+            if inner.feed.is_none() {
+                let at = inner.open_at;
+                self.request(inner, at)?;
                 continue;
             }
-            if inner.pending_skip > 0 {
-                let mut scratch = [0u8; SKIP_CHUNK];
-                let want = scratch.len().min(inner.pending_skip as usize);
-                let Some(body) = inner.body.as_mut() else {
-                    continue;
-                };
-                match body.read(&mut scratch[..want]) {
-                    Ok(0) => return Ok(0),
-                    Ok(read) => {
-                        inner.pending_skip -= read as u64;
-                        continue;
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(error) => {
-                        return Err(link(
-                            LinkFailure::Transport,
-                            format!("read failed: {error}"),
-                        ));
-                    }
-                }
-            }
-            let Some(body) = inner.body.as_mut() else {
+            let Some(feed) = inner.feed.as_ref() else {
                 continue;
             };
-            match body.read(buf) {
-                Ok(0) => return Ok(0),
-                Ok(read) => {
-                    inner.pos += read as u64;
-                    if !inner.head_logged {
-                        inner.head_logged = true;
-                        let head: Vec<String> = buf[..read.min(16)]
-                            .iter()
-                            .map(|byte| format!("{byte:02x}"))
-                            .collect();
-                        log::debug!("yt_audio: the body's first bytes are {}", head.join(" "));
-                    }
-                    return Ok(read);
-                }
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) => {
+            let mut data = feed
+                .state
+                .data
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            loop {
+                if data.pos < data.start {
+                    // Seeks never leave the reader below the window; if
+                    // this happens the source has a bug, not the stream.
                     return Err(link(
                         LinkFailure::Transport,
-                        format!("read failed: {error}"),
+                        "the reader fell behind the fetched window".to_string(),
                     ));
+                }
+                let offset = (data.pos - data.start) as usize;
+                if offset < data.buf.len() {
+                    let take = (data.buf.len() - offset).min(buf.len());
+                    buf[..take].copy_from_slice(&data.buf[offset..offset + take]);
+                    data.pos += take as u64;
+                    drop(data);
+                    feed.state.ready.notify_all();
+                    return Ok(take);
+                }
+                if let Some((kind, detail)) = data.failed.take() {
+                    return Err(link(kind, detail));
+                }
+                if data.done {
+                    return Ok(0);
+                }
+                let stalled = {
+                    let (next, timeout) = feed
+                        .state
+                        .ready
+                        .wait_timeout(data, STALL_TIMEOUT)
+                        .unwrap_or_else(|poison| poison.into_inner());
+                    data = next;
+                    timeout.timed_out() && data.failed.is_none() && !data.done
+                };
+                if stalled && data.pos >= data.start {
+                    let offset = (data.pos - data.start) as usize;
+                    if offset >= data.buf.len() {
+                        return Err(link(
+                            LinkFailure::Transport,
+                            "the stream stopped sending".to_string(),
+                        ));
+                    }
                 }
             }
         }
@@ -257,21 +431,61 @@ impl Seek for RangeSource {
         let inner = &mut *guard;
         let target = match from {
             SeekFrom::Start(offset) => offset,
-            SeekFrom::Current(delta) => inner
-                .pos
-                .checked_add_signed(delta)
-                .ok_or_else(seek_out_of_range)?,
+            SeekFrom::Current(delta) => {
+                let current = match &inner.feed {
+                    Some(feed) => {
+                        feed.state
+                            .data
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .pos
+                    }
+                    None => inner.open_at,
+                };
+                current
+                    .checked_add_signed(delta)
+                    .ok_or_else(seek_out_of_range)?
+            }
             SeekFrom::End(delta) => inner
                 .len
                 .and_then(|len| len.checked_add_signed(delta))
                 .ok_or_else(seek_out_of_range)?,
         };
-        // The open body is dropped; the next read opens a ranged request at
-        // the target.
-        inner.body = None;
-        inner.pending_skip = 0;
-        inner.pos = target;
-        Ok(target)
+        match &inner.feed {
+            Some(feed)
+                if target
+                    >= feed
+                        .state
+                        .data
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .start =>
+            {
+                // Inside the fetched window: a buffer jump, nothing on the
+                // wire.
+                let mut data = feed
+                    .state
+                    .data
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                data.pos = target;
+                drop(data);
+                feed.state.ready.notify_all();
+                Ok(target)
+            }
+            Some(_) => {
+                // Before the window: a fresh ranged burst at the target.
+                if let Some(feed) = inner.feed.take() {
+                    feed.stop();
+                }
+                inner.open_at = target;
+                Ok(target)
+            }
+            None => {
+                inner.open_at = target;
+                Ok(target)
+            }
+        }
     }
 }
 
@@ -316,8 +530,6 @@ mod tests {
     use super::*;
     use std::io::Write as _;
     use std::net::{TcpListener, TcpStream};
-    use std::sync::Arc;
-    use std::thread;
 
     /// How the stub server answers.
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -328,6 +540,8 @@ mod tests {
         Ignoring,
         /// Answers every request with 403.
         Forbidden,
+        /// Sends headers, then holds the connection open without a body.
+        Stalling,
     }
 
     /// A one-endpoint server: the URL, and the Range header of every
@@ -351,6 +565,17 @@ mod tests {
                     let _ = stream.write_all(
                         b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                     );
+                    continue;
+                }
+                if mode == Stub::Stalling {
+                    let head = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-{last}/{total}\r\nContent-Length: {total}\r\nConnection: close\r\n\r\n",
+                        last = bytes.len() - 1,
+                        total = bytes.len(),
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    // Hold the connection open with no body.
+                    std::thread::sleep(Duration::from_secs(5));
                     continue;
                 }
                 let start = range
@@ -447,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn seeking_reopens_with_a_range_request() {
+    fn a_forward_seek_is_served_from_the_buffer() {
         let bytes = payload();
         let (url, seen) = serve(Stub::Honoring, bytes.clone());
         let mut source = RangeSource::new(url, None).expect("source");
@@ -458,12 +683,10 @@ mod tests {
         source.read_to_end(&mut collected).expect("read");
         assert_eq!(collected, bytes[120..].to_vec());
         let asked = seen.lock().unwrap_or_else(PoisonError::into_inner);
-        assert!(
-            asked
-                .iter()
-                .flatten()
-                .any(|value| value.as_str() == "bytes=120-"),
-            "expected a range request at 120: {asked:?}"
+        assert_eq!(
+            asked.iter().flatten().count(),
+            1,
+            "a forward seek must not touch the wire: {asked:?}"
         );
     }
 
@@ -480,6 +703,37 @@ mod tests {
         let mut collected = Vec::new();
         source.read_to_end(&mut collected).expect("read");
         assert_eq!(collected, bytes[100..].to_vec());
+    }
+
+    #[test]
+    fn a_seek_before_the_fetched_window_asks_again() {
+        let bytes = payload();
+        let (url, seen) = serve(Stub::Honoring, bytes.clone());
+        let mut source = RangeSource::new(url, None).expect("source");
+        source.seek(SeekFrom::Start(2000)).expect("seek");
+        let mut head = [0u8; 4];
+        source.read_exact(&mut head).expect("head");
+        assert_eq!(head, bytes[2000..2004]);
+        let target = source.seek(SeekFrom::Start(100)).expect("seek");
+        assert_eq!(target, 100);
+        let mut collected = Vec::new();
+        source.read_to_end(&mut collected).expect("read");
+        assert_eq!(collected, bytes[100..].to_vec());
+        let asked = seen.lock().unwrap_or_else(PoisonError::into_inner);
+        assert!(
+            asked
+                .iter()
+                .flatten()
+                .any(|value| value.as_str() == "bytes=2000-"),
+            "{asked:?}"
+        );
+        assert!(
+            asked
+                .iter()
+                .flatten()
+                .any(|value| value.as_str() == "bytes=100-"),
+            "{asked:?}"
+        );
     }
 
     #[test]
@@ -530,5 +784,21 @@ mod tests {
         let mut source = RangeSource::new(url, None).expect("source");
         let error = source.seek(SeekFrom::End(0)).expect_err("seek must fail");
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn a_body_that_stops_sending_fails_instead_of_hanging() {
+        let (url, _seen) = serve(Stub::Stalling, payload());
+        let mut source = RangeSource::new(url, None).expect("source");
+        source.open().expect("open");
+        let mut byte = [0u8; 4];
+        let started = std::time::Instant::now();
+        let error = source.read_exact(&mut byte).expect_err("must not hang");
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "the stall took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(link_failure(&error), Some(LinkFailure::Transport));
     }
 }
