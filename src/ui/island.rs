@@ -664,7 +664,6 @@ fn paint_transport(app: &mut App, ui: &mut Ui, rect: Rect, p: f32, now: f64) {
         }
     }
 }
-}
 
 /// The heart, and the beat when the like lands.
 fn paint_heart(app: &mut App, ui: &mut Ui, rect: Rect, _p: f32, late: f32, now: f64) {
