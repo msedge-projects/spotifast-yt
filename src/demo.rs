@@ -835,6 +835,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
     if let Some(page) = page.and_then(Page::decode) {
         app.open(page);
     }
+    // A screenshot of the search page shows the live suggestions panel
+    // open, where in a real session it opens on its own once there is text.
+    if page == Some("search") {
+        app.search.suggestions_open = true;
+    }
     for surface in show.unwrap_or("").split(',').map(str::trim) {
         match surface {
             "presaved" => {

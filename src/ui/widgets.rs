@@ -1,8 +1,8 @@
 //! Widgets shared by every view: covers, cards, track rows, menus, sliders.
 
 use egui::{
-    Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Ui, UiBuilder, Vec2,
-    pos2, vec2,
+    Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, ScrollArea, Sense, Stroke, Ui,
+    UiBuilder, Vec2, pos2, vec2,
 };
 
 use crate::api::models::*;
@@ -2961,17 +2961,40 @@ pub fn search_field(
     let height = 34.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let has_focus = ui.memory(|memory| memory.has_focus(id));
-    let fill = if has_focus {
-        palette.surface_hover
-    } else {
+    // The pill reads like the reference player's: a solid capsule under a
+    // hairline (dark on the light theme, light on the dark one), and the
+    // focus ring in the accent, which there is the same red.
+    let pill = if palette.dark {
         palette.surface
+    } else {
+        palette.panel
+    };
+    let fill = if has_focus {
+        if palette.dark {
+            palette.surface_hover
+        } else {
+            palette.surface
+        }
+    } else {
+        pill
     };
     ui.painter().rect_filled(rect, height / 2.0, fill);
+    let hairline = if palette.dark {
+        Color32::from_white_alpha(38)
+    } else {
+        Color32::from_black_alpha(13)
+    };
+    ui.painter().rect_stroke(
+        rect,
+        height / 2.0,
+        Stroke::new(1.0, hairline),
+        egui::StrokeKind::Inside,
+    );
     if has_focus {
         ui.painter().rect_stroke(
             rect,
             height / 2.0,
-            Stroke::new(1.5, palette.text.gamma_multiply(0.6)),
+            Stroke::new(2.0, palette.accent),
             egui::StrokeKind::Inside,
         );
     }
@@ -3046,6 +3069,351 @@ pub fn search_field(
             ui.memory_mut(|memory| memory.request_focus(id));
         }
     }
+    response
+}
+
+/// The cover in a suggestion row.
+pub const SUGGESTION_ART: f32 = 40.0;
+
+/// One row of the live suggestions panel under the search field.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Suggestion {
+    /// The typed words or a recent search: runs the full search.
+    Query(String),
+    /// A song: plays it.
+    Song {
+        uri: String,
+        title: String,
+        artist: String,
+        art: Option<String>,
+    },
+    /// An artist: opens their page.
+    Artist {
+        id: String,
+        name: String,
+        art: Option<String>,
+    },
+    /// An album: opens its page.
+    Album {
+        id: String,
+        name: String,
+        artist: String,
+        art: Option<String>,
+    },
+    /// A playlist: opens its page.
+    Playlist {
+        id: String,
+        name: String,
+        owner: String,
+        art: Option<String>,
+    },
+}
+
+impl Suggestion {
+    /// The row's two lines, the way the reference rows read: the name,
+    /// then the kind and its detail.
+    fn label(&self, locale: Locale) -> (String, String) {
+        match self {
+            Suggestion::Query(text) => (text.clone(), String::new()),
+            Suggestion::Song { title, artist, .. } => (
+                title.clone(),
+                format!("{} • {}", gettext(locale, "Song"), artist),
+            ),
+            Suggestion::Artist { name, .. } => {
+                (name.clone(), gettext(locale, "Artist").to_string())
+            }
+            Suggestion::Album { name, artist, .. } => (
+                name.clone(),
+                format!("{} • {}", gettext(locale, "Album"), artist),
+            ),
+            Suggestion::Playlist { name, owner, .. } => (
+                name.clone(),
+                format!("{} • {}", gettext(locale, "Playlist"), owner),
+            ),
+        }
+    }
+
+    fn media(&self) -> bool {
+        !matches!(self, Suggestion::Query(_))
+    }
+}
+
+/// The rows the live suggestions panel shows for what is typed and what
+/// the search has answered so far: the words themselves first, then
+/// matching recent searches, then songs, artists, albums, and playlists
+/// as they arrive.
+pub fn suggestion_rows(
+    query: &str,
+    history: &[String],
+    results: Option<&SearchResults>,
+    art_px: u32,
+) -> Vec<Suggestion> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let mut rows = vec![Suggestion::Query(query.to_string())];
+    let lowered = query.to_lowercase();
+    let mut hints = 0;
+    for recent in history {
+        if hints >= 3 {
+            break;
+        }
+        if recent == query || !recent.to_lowercase().starts_with(&lowered) {
+            continue;
+        }
+        rows.push(Suggestion::Query(recent.clone()));
+        hints += 1;
+    }
+    let Some(results) = results else {
+        return rows;
+    };
+    if let Some(page) = &results.tracks {
+        for track in page.items.iter().take(6) {
+            rows.push(Suggestion::Song {
+                uri: track.uri.clone(),
+                title: track.name.clone(),
+                artist: track.artist_names(),
+                art: track.image(art_px).map(str::to_string),
+            });
+        }
+    }
+    if let Some(page) = &results.artists {
+        for artist in page.items.iter().take(2) {
+            rows.push(Suggestion::Artist {
+                id: artist.id.clone(),
+                name: artist.name.clone(),
+                art: pick_image(&artist.images, art_px).map(str::to_string),
+            });
+        }
+    }
+    if let Some(page) = &results.albums {
+        for album in page.items.iter().take(2) {
+            rows.push(Suggestion::Album {
+                id: album.id.clone(),
+                name: album.name.clone(),
+                artist: join_names(album.artists.iter().map(|artist| artist.name.as_str())),
+                art: pick_image(&album.images, art_px).map(str::to_string),
+            });
+        }
+    }
+    if let Some(page) = &results.playlists {
+        for playlist in page.items.iter().take(2) {
+            rows.push(Suggestion::Playlist {
+                id: playlist.id.clone(),
+                name: playlist.name.clone(),
+                owner: playlist.owner_name().to_string(),
+                art: pick_image(&playlist.images, art_px).map(str::to_string),
+            });
+        }
+    }
+    rows
+}
+
+/// Runs a picked suggestion: the words run the full search, a song
+/// plays, a name opens its page; either way the panel closes.
+pub fn apply_suggestion(app: &mut App, row: &Suggestion) {
+    app.search.suggestions_open = false;
+    app.search.suggest_highlight = None;
+    match row {
+        Suggestion::Query(text) => app.actions.push(Action::Search(text.clone())),
+        Suggestion::Song { uri, .. } => {
+            if uri.starts_with("spotify:track:") {
+                app.actions.push(Action::PlayUris {
+                    uris: vec![uri.clone()],
+                    index: 0,
+                });
+            } else {
+                app.actions.push(Action::PlayContext {
+                    uri: uri.clone(),
+                    offset_uri: None,
+                    offset_index: None,
+                });
+            }
+        }
+        Suggestion::Artist { id, .. } => app.actions.push(Action::Open(Page::Artist(id.clone()))),
+        Suggestion::Album { id, .. } => app.actions.push(Action::Open(Page::Album(id.clone()))),
+        Suggestion::Playlist { id, .. } => {
+            app.actions.push(Action::Open(Page::Playlist(id.clone())));
+        }
+    }
+}
+
+/// Draws the live suggestions panel under the search field and returns
+/// its rect, for the caller's outside-click test. The fill is the
+/// measured frosted material (translucent, hairline, wide soft shadow);
+/// egui cannot blur what is behind a panel, so that one part of the
+/// reference is approximated.
+pub fn search_suggestions(
+    ui: &mut Ui,
+    app: &mut App,
+    rows: &[Suggestion],
+    anchor: Rect,
+    width: f32,
+) -> Option<Rect> {
+    if rows.is_empty() {
+        return None;
+    }
+    let palette = app.palette;
+    let ctx = ui.ctx().clone();
+    let screen_height =
+        ctx.input(|input| input.raw.screen_rect.map_or(720.0, |rect| rect.height()));
+    let max_height = (screen_height * 0.55).clamp(200.0, 560.0);
+    let fill = if palette.dark {
+        Color32::from_rgba_unmultiplied(40, 44, 48, 180)
+    } else {
+        Color32::from_rgba_unmultiplied(246, 246, 246, 184)
+    };
+    let hairline = if palette.dark {
+        Color32::from_white_alpha(30)
+    } else {
+        Color32::from_black_alpha(16)
+    };
+    let hover_fill = if palette.dark {
+        Color32::from_white_alpha(20)
+    } else {
+        Color32::from_black_alpha(12)
+    };
+    let divider = if palette.dark {
+        Color32::from_white_alpha(14)
+    } else {
+        Color32::from_black_alpha(10)
+    };
+    let shadow = egui::epaint::Shadow {
+        offset: [0, 8],
+        blur: 40,
+        spread: 0,
+        color: palette.shadow,
+    };
+    let mut hovered: Option<usize> = None;
+    let mut picked: Option<Suggestion> = None;
+    let area = egui::Area::new(ui.make_persistent_id("search-suggestions"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos2(anchor.left(), anchor.bottom() + 6.0))
+        .show(&ctx, |ui| {
+            ui.set_max_width(width);
+            Frame::new()
+                .fill(fill)
+                .stroke(Stroke::new(1.0, hairline))
+                .corner_radius(9)
+                .shadow(shadow)
+                .inner_margin(Margin::symmetric(0, 6))
+                .show(ui, |ui| {
+                    ui.set_min_width(width);
+                    ScrollArea::vertical()
+                        .max_height(max_height)
+                        .show(ui, |ui| {
+                            for (index, row) in rows.iter().enumerate() {
+                                let highlighted = app.search.suggest_highlight == Some(index);
+                                let response = suggestion_row(
+                                    ui,
+                                    &palette,
+                                    app.locale,
+                                    row,
+                                    highlighted,
+                                    hover_fill,
+                                );
+                                if response.hovered() {
+                                    hovered = Some(index);
+                                }
+                                if response.clicked() {
+                                    picked = Some(row.clone());
+                                }
+                                let below = rows.get(index + 1).is_some_and(Suggestion::media);
+                                if row.media() && below {
+                                    let y = response.rect.bottom() + 0.5;
+                                    ui.painter().hline(
+                                        (response.rect.left() + 12.0)
+                                            ..=(response.rect.right() - 12.0),
+                                        y,
+                                        Stroke::new(1.0, divider),
+                                    );
+                                }
+                            }
+                        });
+                });
+        });
+    if let Some(index) = hovered {
+        app.search.suggest_highlight = Some(index);
+    }
+    if let Some(row) = picked {
+        apply_suggestion(app, &row);
+    }
+    Some(area.response.rect)
+}
+
+/// One row: the magnifier for the words and a recent search, artwork and
+/// two lines for a song or a name.
+fn suggestion_row(
+    ui: &mut Ui,
+    palette: &Palette,
+    locale: Locale,
+    row: &Suggestion,
+    highlighted: bool,
+    hover_fill: Color32,
+) -> egui::Response {
+    let height = if row.media() { 58.0 } else { 36.0 };
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
+    if response.hovered() || highlighted {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(6), hover_fill);
+    }
+    let (title, subtitle) = row.label(locale);
+    let mut text_left = rect.left() + 16.0;
+    if row.media() {
+        let art = match row {
+            Suggestion::Song { art, .. }
+            | Suggestion::Artist { art, .. }
+            | Suggestion::Album { art, .. }
+            | Suggestion::Playlist { art, .. } => art.as_deref(),
+            Suggestion::Query(_) => None,
+        };
+        let cover_rect = Rect::from_min_size(
+            pos2(rect.left() + 12.0, rect.center().y - SUGGESTION_ART / 2.0),
+            Vec2::splat(SUGGESTION_ART),
+        );
+        paint_cover(ui, palette, art, cover_rect, 6.0, Icon::Music, None);
+        text_left = cover_rect.right() + 12.0;
+    } else {
+        let icon_rect =
+            Rect::from_center_size(pos2(rect.left() + 32.0, rect.center().y), Vec2::splat(16.0));
+        Icon::Search
+            .image(palette.secondary, 16.0)
+            .paint_at(ui, icon_rect);
+    }
+    let mut title_galley = ui.painter().layout_no_wrap(
+        title.clone(),
+        theme::regular(if row.media() { 15.0 } else { 14.5 }),
+        palette.text,
+    );
+    crate::bidi::reorder(&mut title_galley);
+    let title_pos = if subtitle.is_empty() {
+        pos2(text_left, rect.center().y - title_galley.size().y / 2.0)
+    } else {
+        pos2(text_left, rect.top() + 9.0)
+    };
+    ui.painter().galley(title_pos, title_galley, palette.text);
+    if !subtitle.is_empty() {
+        let mut sub_galley =
+            ui.painter()
+                .layout_no_wrap(subtitle.clone(), theme::regular(13.0), palette.secondary);
+        crate::bidi::reorder(&mut sub_galley);
+        ui.painter().galley(
+            pos2(text_left, rect.top() + 30.0),
+            sub_galley,
+            palette.secondary,
+        );
+    }
+    // Translators: {title} and {subtitle} name a suggestion row.
+    let label = if subtitle.is_empty() {
+        title
+    } else {
+        gettext(locale, "{title}, {subtitle}")
+            .replace("{title}", &title)
+            .replace("{subtitle}", &subtitle)
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
     response
 }
 
@@ -4000,6 +4368,53 @@ mod tests {
             uri: uri.to_string(),
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn suggestions_read_the_way_the_reference_rows_do() {
+        let results = SearchResults {
+            tracks: Some(crate::api::models::Page {
+                items: vec![Track {
+                    name: "Danza Rota".into(),
+                    uri: "yt:abc".into(),
+                    artists: vec![ArtistRef {
+                        name: "Soda Stereo".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let history = vec!["danza rota gepe".to_string(), "danzante".to_string()];
+        let rows = suggestion_rows("danza rota", &history, Some(&results), 80);
+        assert_eq!(rows.first(), Some(&Suggestion::Query("danza rota".into())));
+        assert!(
+            matches!(rows.get(1), Some(Suggestion::Query(text)) if text == "danza rota gepe"),
+            "a recent search that extends the words follows them: {rows:?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| matches!(row, Suggestion::Song { title, artist, .. }
+                    if title == "Danza Rota" && artist == "Soda Stereo")),
+            "the answered song carries its title and artist: {rows:?}"
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|row| matches!(row, Suggestion::Query(text) if text == "danzante")),
+            "a recent search that does not match stays out: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_field_has_no_suggestions() {
+        assert!(suggestion_rows("   ", &[], None, 80).is_empty());
+        assert_eq!(
+            suggestion_rows("x", &[], None, 80),
+            vec![Suggestion::Query("x".into())]
+        );
     }
 
     #[test]

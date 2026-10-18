@@ -345,6 +345,23 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             let search_width = fit.search;
             let id = egui::Id::new("global-search");
             let before = app.search.query.clone();
+            // While the suggestions panel is open, the arrows and Enter
+            // drive the panel rather than the text field.
+            let mut panel_step: i64 = 0;
+            let mut panel_enter = false;
+            if app.search.suggestions_open && !app.search.query.trim().is_empty() {
+                ui.input_mut(|input| {
+                    if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                        panel_step += 1;
+                    }
+                    if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                        panel_step -= 1;
+                    }
+                    if input.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+                        panel_enter = true;
+                    }
+                });
+            }
             let selected = egui::TextEdit::load_state(ui.ctx(), id)
                 .and_then(|state| state.cursor.char_range())
                 .is_some_and(|range| !range.is_empty());
@@ -374,16 +391,86 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     app.actions.push(Action::EndSearchRun);
                 }
                 app.search.typed_at = Some(std::time::Instant::now());
+                app.search.suggestions_open = !app.search.query.trim().is_empty();
+                app.search.suggest_highlight = None;
                 if !cleared && !matches!(app.page(), Page::Search) {
                     app.actions.push(Action::Open(Page::Search));
                 }
             }
-            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+            // The rows the live panel shows for what is typed and what the
+            // search has answered so far; they refresh as answers stream in.
+            let suggestions = if app.search.suggestions_open {
+                super::widgets::suggestion_rows(
+                    &app.search.query,
+                    &app.settings.search_history,
+                    match &app.search.results {
+                        crate::model::Loadable::Loaded(results) => Some(results),
+                        _ => None,
+                    },
+                    app.art_px(super::widgets::SUGGESTION_ART),
+                )
+            } else {
+                Vec::new()
+            };
+            if panel_step != 0 {
+                let count = suggestions.len().max(1) as i64;
+                let current = app.search.suggest_highlight.map_or(-1, |row| row as i64);
+                let next = (current + panel_step).rem_euclid(count);
+                app.search.suggest_highlight = Some(next as usize);
+            }
+            if panel_enter {
+                match app
+                    .search
+                    .suggest_highlight
+                    .and_then(|index| suggestions.get(index))
+                {
+                    Some(row) => {
+                        let row = row.clone();
+                        super::widgets::apply_suggestion(app, &row);
+                    }
+                    None => {
+                        // Nothing highlighted: Enter submits the words the
+                        // way it always has.
+                        let query = app.search.query.clone();
+                        app.search.suggestions_open = false;
+                        app.actions.push(Action::Search(query));
+                    }
+                }
+            }
+            if response.lost_focus()
+                && !panel_enter
+                && ui.input(|input| input.key_pressed(egui::Key::Enter))
+            {
                 let query = app.search.query.clone();
+                app.search.suggestions_open = false;
                 app.actions.push(Action::Search(query));
             }
             if response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                app.search.suggestions_open = false;
+                app.search.suggest_highlight = None;
                 response.surrender_focus();
+            }
+            // The live suggestions panel under the field; a click outside
+            // it and the field closes it.
+            let panel = if app.search.suggestions_open && !suggestions.is_empty() {
+                super::widgets::search_suggestions(
+                    ui,
+                    app,
+                    &suggestions,
+                    response.rect,
+                    search_width,
+                )
+            } else {
+                None
+            };
+            if let Some(panel) = panel
+                && ui.input(|input| input.pointer.any_click())
+                && let Some(pointer) = ui.input(|input| input.pointer.interact_pos())
+                && !panel.contains(pointer)
+                && !response.rect.contains(pointer)
+            {
+                app.search.suggestions_open = false;
+                app.search.suggest_highlight = None;
             }
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

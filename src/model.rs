@@ -736,6 +736,10 @@ pub struct SearchState {
     /// a prefix; the next query of the same run replaces it.
     pub typed_entry: Option<(u64, String)>,
     pub focus_requested: bool,
+    /// Whether the live suggestions panel is open under the search field.
+    pub suggestions_open: bool,
+    /// The highlighted row in the suggestions panel, for the keyboard.
+    pub suggest_highlight: Option<usize>,
     /// In YouTube mode: the artist the current results point at, with the
     /// songs a follow-up search answered for them. The shelf under the
     /// results draws these.
