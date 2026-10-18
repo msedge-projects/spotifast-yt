@@ -374,6 +374,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 &gettext(locale, "What do you want to play?"),
                 search_width,
             );
+            // The panel hangs under the pill itself, not under the text
+            // inset inside it.
+            let pill_rect = ui
+                .ctx()
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("search-pill-rect")))
+                .unwrap_or(response.rect);
             if app.search.focus_requested {
                 app.search.focus_requested = false;
                 response.request_focus();
@@ -453,13 +459,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             // The live suggestions panel under the field; a click outside
             // it and the field closes it.
             let panel = if app.search.suggestions_open && !suggestions.is_empty() {
-                super::widgets::search_suggestions(
-                    ui,
-                    app,
-                    &suggestions,
-                    response.rect,
-                    search_width,
-                )
+                super::widgets::search_suggestions(ui, app, &suggestions, pill_rect, search_width)
             } else {
                 None
             };
@@ -467,7 +467,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 && ui.input(|input| input.pointer.any_click())
                 && let Some(pointer) = ui.input(|input| input.pointer.interact_pos())
                 && !panel.contains(pointer)
-                && !response.rect.contains(pointer)
+                && !pill_rect.contains(pointer)
             {
                 app.search.suggestions_open = false;
                 app.search.suggest_highlight = None;

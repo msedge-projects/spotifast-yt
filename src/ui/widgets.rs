@@ -2998,6 +2998,11 @@ pub fn search_field(
             egui::StrokeKind::Inside,
         );
     }
+    // The pill's own rect, so the suggestions panel can sit under the pill
+    // rather than under the text inside it.
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(egui::Id::new("search-pill-rect"), rect);
+    });
     let icon_rect =
         Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(16.0));
     Icon::Search
@@ -3376,11 +3381,14 @@ fn suggestion_row(
         paint_cover(ui, palette, art, cover_rect, 6.0, Icon::Music, None);
         text_left = cover_rect.right() + 12.0;
     } else {
+        // The magnifier and the words keep the pill's own columns, so the
+        // panel reads as one piece with it.
         let icon_rect =
-            Rect::from_center_size(pos2(rect.left() + 32.0, rect.center().y), Vec2::splat(16.0));
+            Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(16.0));
         Icon::Search
             .image(palette.secondary, 16.0)
             .paint_at(ui, icon_rect);
+        text_left = rect.left() + 34.0;
     }
     let mut title_galley = ui.painter().layout_no_wrap(
         title.clone(),
