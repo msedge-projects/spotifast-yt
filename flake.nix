@@ -120,9 +120,9 @@
                 pname = "musify";
                 version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
                 src = self;
-                # The vendor tree changed with the decode dependencies; this
-                # placeholder makes the next build report the value.
-                hash = "";
+                # Refreshed with the decode dependencies (symphonia's aac
+                # and isomp4 features and the pure-Rust Opus decoder).
+                hash = "sha256-SWWjMajVokN+7op/06khEnOy/XOhp9ZwxrKH34Sb6ck=";
               };
               # projectm-sys only searches lib, while CMake may otherwise install to lib64.
               postPatch = ''
