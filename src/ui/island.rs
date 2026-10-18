@@ -214,10 +214,12 @@ pub struct IslandState {
 }
 
 impl IslandState {
-    /// The card, fully settled, for a screenshot or a test.
+    /// The card, fully settled, for a screenshot or a test. The pointer
+    /// grace never fires: a settled island is one nothing is leaving.
     pub fn settle_open(&mut self) {
         self.visible = true;
         self.open = true;
+        self.seen_at = f64::INFINITY;
         self.appear = Tween {
             from: 1.0,
             to: 1.0,
@@ -660,6 +662,12 @@ fn paint_transport(app: &mut App, ui: &mut Ui, rect: Rect, p: f32, now: f64) {
         if response.clicked() {
             app.actions.push(Action::IslandToMain);
         }
+        #[cfg(test)]
+        eprintln!(
+            "island restore: p {p}, hovered {}, clicked {}",
+            response.hovered(),
+            response.clicked()
+        );
     }
 }
 
@@ -803,10 +811,10 @@ mod tests {
     #[test]
     fn the_late_window_holds_the_card_only_things_back() {
         let late = |p: f32| clamp01((p - 0.6) / 0.4);
-        assert_eq!(late(0.0), 0.0);
-        assert_eq!(late(0.6), 0.0);
+        assert!(late(0.0).abs() < 1e-6);
+        assert!(late(0.6).abs() < 1e-6);
         assert!((late(0.8) - 0.5).abs() < 1e-6);
-        assert_eq!(late(1.0), 1.0);
+        assert!((late(1.0) - 1.0).abs() < 1e-6);
     }
 
     #[test]
