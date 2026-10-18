@@ -13631,6 +13631,17 @@ mod tests {
             app.settings.winamp_window = skinned;
             app.settings.playlist_open = skinned;
             app.settings.skin_scale = Some(2);
+            if skinned {
+                // The classic player dresses by its skin; wear one so the
+                // skinned playlist is the surface under test.
+                let name = "autoscroll.wsz";
+                app.settings.skin = Some(name.into());
+                app.skin_loaded(crate::winamp::Loaded {
+                    name: name.into(),
+                    result: Ok(some_skin(name)),
+                    installed: false,
+                });
+            }
             if let Loadable::Loaded(queue) = &mut app.queue {
                 queue.queue = queue.queue.iter().cycle().take(80).cloned().collect();
             }
