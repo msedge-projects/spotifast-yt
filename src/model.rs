@@ -1274,6 +1274,8 @@ pub enum Action {
     ClearPlayHistory,
     /// Open or close the Winamp window.
     ToggleWinampWindow,
+    /// The island's way home: bring the main window back.
+    IslandToMain,
     /// Select a skin, or the built-in skin for `None`.
     SetSkin(Option<String>),
     /// Install and select a skin file.

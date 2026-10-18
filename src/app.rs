@@ -325,6 +325,12 @@ pub struct App {
     /// The window should close and reopen at once as the other kind: the
     /// big window or the Winamp mini player.
     pub switch_intent: bool,
+    /// The island is the window: the pill at the top of the screen the
+    /// minimized main window hands over to. Not persisted; the app
+    /// always opens as the main window.
+    pub island_window: bool,
+    /// What the island's strip, pill and card are doing.
+    pub island: crate::ui::island::IslandState,
     /// Commands from control clients (a second `musify <verb>` launch,
     /// a Raycast script, a link the desktop opens). Drained every frame.
     control_commands: Option<std::sync::Arc<std::sync::Mutex<Vec<ControlCommand>>>>,
@@ -930,6 +936,8 @@ impl App {
             hide_intent: false,
             wants_show: false,
             switch_intent: false,
+            island_window: false,
+            island: crate::ui::island::IslandState::default(),
             control_commands: None,
             control_now_playing: None,
             control_devices: None,
@@ -11210,8 +11218,7 @@ impl App {
                         .replace("{error}", &error.to_string()),
                 ),
             },
-            Action::ToggleWinampWindow => {
-                // One window at a time: this one closes and the loop in
+            Action::ToggleWinampWindow => {                // One window at a time: this one closes and the loop in
                 // `main` opens the other kind where each was last.
                 if !self.settings.winamp_window && self.settings.random_skin {
                     self.winamp.refresh_choices(&self.dirs.skins_dir());
@@ -11231,6 +11238,11 @@ impl App {
                 }
                 self.settings.winamp_window = !self.settings.winamp_window;
                 self.settings_dirty = true;
+                self.switch_intent = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Action::IslandToMain => {
+                self.island_window = false;
                 self.switch_intent = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -11986,6 +11998,13 @@ impl App {
         }
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        // A minimized main window hands the screen to the island.
+        if !self.island_window && ctx.input(|input| input.viewport().minimized == Some(true)) {
+            self.island_window = true;
+            self.switch_intent = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         self.pixels_per_point = ctx.pixels_per_point();
         self.refresh_frame_now();
         self.apply_theme(ctx);
@@ -12019,14 +12038,10 @@ impl App {
         if self.settings.winamp_window && needs_sign_in && !self.switch_intent {
             self.actions.push(Action::ToggleWinampWindow);
         }
-        if self.settings.winamp_window {
-            // The house look while no custom skin is worn: the glass
-            // player. A worn skin keeps the classic player it dresses.
-            if self.settings.skin.is_none() {
-                crate::ui::glass::show(self, ui);
-            } else {
-                crate::ui::winamp::show(self, ui);
-            }
+        if self.island_window {
+            crate::ui::island::show(self, ui);
+        } else if self.settings.winamp_window {
+            crate::ui::winamp::show(self, ui);
         } else {
             crate::ui::show(self, ui);
         }
@@ -13612,17 +13627,22 @@ mod tests {
         }
     }
 
-    /// A frame of the glass mini player in a headless context.
-    fn draw_glass(
+    /// A frame of the island in a headless context. The window is the
+    /// card's size at most; the island paints from its own top-left
+    /// corner inside it.
+    fn draw_island(
         ctx: &egui::Context,
         app: &mut App,
-        window: egui::Rect,
         events: Vec<egui::Event>,
+        time: f64,
     ) -> egui::FullOutput {
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(window),
-                time: Some(1.0),
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(260.0, 189.0),
+                )),
+                time: Some(time),
                 events,
                 ..Default::default()
             },
@@ -13633,14 +13653,7 @@ mod tests {
         output
     }
 
-    fn glass_window(app: &App) -> egui::Rect {
-        egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            crate::ui::glass::window_size(&app.settings),
-        )
-    }
-
-    fn glass_press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+    fn island_press(pos: egui::Pos2, pressed: bool) -> egui::Event {
         egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
@@ -13649,96 +13662,86 @@ mod tests {
         }
     }
 
-    /// Whether a frame asked the operating system to move the window.
-    fn started_a_drag(output: &egui::FullOutput) -> bool {
-        output.viewport_output.values().any(|viewport| {
-            viewport
-                .commands
-                .iter()
-                .any(|command| matches!(command, egui::ViewportCommand::StartDrag))
-        })
-    }
-
-    /// The glass player's way home works: with nothing playing, the one
-    /// button is "Open the main window", a click on it leaves the mini
-    /// player, and the press must not start a window move on the way.
+    /// The island wakes on hover, opens on a click, and its way-home
+    /// button leaves for the main window.
     #[test]
-    fn clicking_the_glass_players_way_home_leaves_the_mini_player() {
+    fn the_island_wakes_opens_and_goes_home() {
         let ctx = egui::Context::default();
-        let mut app = test_app("glass-home-click");
+        let mut app = test_app("island-flow");
         app.attach(&ctx);
-        app.settings.winamp_window = true;
-        app.settings.skin = None;
-        let window = glass_window(&app);
-        let at = crate::ui::glass::home_pill(
-            crate::ui::glass::rows(crate::ui::glass::panel_rect(window)).2,
-        )
-        .center();
-        // Two still frames so the widgets are laid out before the click.
-        draw_glass(&ctx, &mut app, window, vec![]);
-        draw_glass(&ctx, &mut app, window, vec![]);
-        assert!(app.settings.winamp_window, "the mini player is the window");
-        draw_glass(&ctx, &mut app, window, vec![egui::Event::PointerMoved(at)]);
-        let pressing = draw_glass(&ctx, &mut app, window, vec![glass_press(at, true)]);
-        assert!(
-            !started_a_drag(&pressing),
-            "the press must not move the window"
-        );
-        let releasing = draw_glass(&ctx, &mut app, window, vec![glass_press(at, false)]);
-        assert!(!started_a_drag(&releasing));
-        assert!(
-            !app.settings.winamp_window,
-            "the button goes back to the main window"
-        );
-        app.backend.shutdown();
-    }
-
-    /// The close chip does the same with a song playing.
-    #[test]
-    fn the_glass_players_close_chip_leaves_the_mini_player() {
-        let ctx = egui::Context::default();
-        let mut app = test_app("glass-close-click");
-        app.attach(&ctx);
+        app.island_window = true;
         crate::demo::populate(&mut app);
-        app.settings.winamp_window = true;
-        app.settings.skin = None;
-        let window = glass_window(&app);
-        let at = crate::ui::glass::close_rect(crate::ui::glass::panel_rect(window)).center();
-        draw_glass(&ctx, &mut app, window, vec![]);
-        draw_glass(&ctx, &mut app, window, vec![]);
-        draw_glass(&ctx, &mut app, window, vec![egui::Event::PointerMoved(at)]);
-        let pressing = draw_glass(&ctx, &mut app, window, vec![glass_press(at, true)]);
-        assert!(!started_a_drag(&pressing));
-        draw_glass(&ctx, &mut app, window, vec![glass_press(at, false)]);
-        assert!(
-            !app.settings.winamp_window,
-            "the close chip goes back to the main window"
+        // Still frames lay the widgets out.
+        draw_island(&ctx, &mut app, vec![], 1.0);
+        draw_island(&ctx, &mut app, vec![], 1.1);
+        assert!(!app.island.visible, "the strip is quiet until found");
+
+        // The pointer finds the strip at the top center.
+        let strip = egui::pos2(130.0, 4.0);
+        draw_island(&ctx, &mut app, vec![egui::Event::PointerMoved(strip)], 2.0);
+        assert!(app.island.visible, "the strip wakes the pill");
+        assert_eq!(
+            app.island.asked,
+            egui::vec2(260.0, 78.0),
+            "the window becomes the pill's"
         );
+
+        // The pill is there; a click opens it.
+        let at = egui::pos2(130.0, 40.0);
+        draw_island(&ctx, &mut app, vec![egui::Event::PointerMoved(at)], 2.1);
+        draw_island(&ctx, &mut app, vec![island_press(at, true)], 2.11);
+        draw_island(&ctx, &mut app, vec![island_press(at, false)], 2.15);
+        assert!(app.island.open, "the pill opens the card");
+        draw_island(&ctx, &mut app, vec![], 2.8);
+        assert_eq!(
+            app.island.asked,
+            egui::vec2(260.0, 189.0),
+            "the window becomes the card's"
+        );
+
+        // The way home, at the end of the transport row.
+        let box_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(260.0, 189.0));
+        let restore = crate::ui::island::restore_rect(box_rect, 1.0).center();
+        draw_island(&ctx, &mut app, vec![egui::Event::PointerMoved(restore)], 2.9);
+        draw_island(&ctx, &mut app, vec![island_press(restore, true)], 2.91);
+        draw_island(&ctx, &mut app, vec![island_press(restore, false)], 2.95);
+        assert!(!app.island_window, "the way home leaves the island");
+        assert!(app.switch_intent, "and replaces the window");
         app.backend.shutdown();
     }
 
-    /// Dragging the empty margin really moves the window, so the panel is
-    /// still draggable where no control sits.
+    /// A click on the sleeve folds the card; the window stays the
+    /// card's size until the morph has landed, then folds to nothing.
     #[test]
-    fn dragging_the_glass_players_empty_space_starts_a_window_move() {
+    fn the_island_folds_when_its_sleeve_is_clicked() {
         let ctx = egui::Context::default();
-        let mut app = test_app("glass-drag-move");
+        let mut app = test_app("island-fold");
         app.attach(&ctx);
-        app.settings.winamp_window = true;
-        app.settings.skin = None;
-        let window = glass_window(&app);
-        draw_glass(&ctx, &mut app, window, vec![]);
-        draw_glass(&ctx, &mut app, window, vec![]);
-        let empty = egui::pos2(4.0, window.center().y);
-        draw_glass(&ctx, &mut app, window, vec![egui::Event::PointerMoved(empty)]);
-        draw_glass(&ctx, &mut app, window, vec![glass_press(empty, true)]);
-        let moved = draw_glass(
-            &ctx,
-            &mut app,
-            window,
-            vec![egui::Event::PointerMoved(empty + egui::vec2(60.0, 0.0))],
+        app.island_window = true;
+        crate::demo::populate(&mut app);
+        app.island.settle_open();
+        draw_island(&ctx, &mut app, vec![], 1.0);
+        assert!(app.island.open && app.island.visible, "the card is here");
+        let sleeve = egui::pos2(30.0, 30.0);
+        draw_island(&ctx, &mut app, vec![egui::Event::PointerMoved(sleeve)], 1.1);
+        draw_island(&ctx, &mut app, vec![island_press(sleeve, true)], 1.11);
+        draw_island(&ctx, &mut app, vec![island_press(sleeve, false)], 1.15);
+        assert!(!app.island.open, "the sleeve folds the card");
+        assert_eq!(
+            app.island.asked,
+            egui::vec2(260.0, 189.0),
+            "the window holds until the morph lands"
         );
-        assert!(started_a_drag(&moved), "a real drag moves the window");
+        // The morph lands; the pill folds and the window comes down.
+        draw_island(&ctx, &mut app, vec![], 2.0);
+        draw_island(&ctx, &mut app, vec![egui::Event::PointerGone], 2.6);
+        draw_island(&ctx, &mut app, vec![], 3.5);
+        assert_eq!(
+            app.island.asked,
+            egui::vec2(260.0, 8.0),
+            "back to the strip"
+        );
+        assert!(!app.island.visible);
         app.backend.shutdown();
     }
 

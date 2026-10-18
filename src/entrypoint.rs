@@ -757,6 +757,18 @@ struct MiniWindow {
 
 impl MiniWindow {
     fn wanted(app: &app::App) -> Option<Self> {
+        // The island is the small window while the main one is
+        // minimized: a strip at the top of the screen that wakes when
+        // the pointer finds it.
+        if app.island_window {
+            return Some(Self {
+                size: musify::ui::island::RESTING_SIZE,
+                geometry: Geometry::default(),
+                on_top: true,
+                taskbar: false,
+                storage_path: app.dirs.cache.join("island.ron"),
+            });
+        }
         app.settings.winamp_window.then(|| Self {
             size: musify::ui::winamp::initial_size(&app.settings),
             geometry: Geometry {
@@ -1584,9 +1596,10 @@ impl eframe::App for Shell {
     }
 
     /// The mini player's window is see-through where the skin leaves it
-    /// out; the big window paints itself over eframe's own ground.
+    /// out, and the island floats its own pane; the big window paints
+    /// itself over eframe's own ground.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        if self.app.settings.winamp_window {
+        if self.app.settings.winamp_window || self.app.island_window {
             [0.0; 4]
         } else {
             egui::Color32::from_rgba_unmultiplied(12, 12, 12, 180).to_normalized_gamma_f32()

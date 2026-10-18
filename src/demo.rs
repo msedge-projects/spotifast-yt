@@ -1123,6 +1123,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
                 // captures match the pages that show them.
                 app.settings.skin_scale = Some(2);
             }
+            // The island: the strip that wakes into the player card.
+            "island" => {
+                app.island_window = true;
+            }
+            "island-open" => {
+                app.island_window = true;
+                app.island.settle_open();
+            }
             "playlist" => app.settings.playlist_open = true,
             "shade" => app.settings.winamp_shaded = true,
             "playlist-shade" => app.settings.playlist_shaded = true,
