@@ -356,7 +356,10 @@ fn transport_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rec
     let sizes = [30.0, 36.0, 52.0, 36.0, 30.0];
     let gap = 6.0;
     let total: f32 = sizes.iter().sum::<f32>() + gap * 4.0;
-    let mut x = transport.center().x - total / 2.0;
+    // The cluster centres in what the volume leaves, not the whole row:
+    // the speaker and its track own the right edge.
+    let volume_left = transport.right() - 90.0;
+    let mut x = (transport.left() + volume_left) / 2.0 - total / 2.0;
     let mut slot = |size: f32| {
         let rect = Rect::from_center_size(pos2(x + size / 2.0, transport.center().y), Vec2::splat(size));
         x += size + gap;
