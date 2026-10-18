@@ -10,21 +10,25 @@
 //! paused player costs no audio work (#636), follows the system's default
 //! output and reopens after a failure. rodio's mixer and queue fill it.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering, fence};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering, fence};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use fastframe_audio::{Buffer, BufferSize, Maintained, OutputOptions, Reason, Render};
 use librespot_playback::audio_backend::{Sink, SinkError, SinkResult};
+use librespot_playback::config::VolumeCtrl;
 use librespot_playback::convert::Converter;
 use librespot_playback::decoder::AudioPacket;
 use librespot_playback::mixer::VolumeGetter;
+use librespot_playback::mixer::mappings::MappedCtrl;
 use librespot_playback::player::PlayerEvent;
 use librespot_playback::{NUM_CHANNELS, SAMPLE_RATE};
 use rodio::Source;
 
+use crate::eq::SharedEq;
 use crate::resample::Resampler;
+use crate::vis::{AudioTap, Tapped};
 
 /// The backend name Settings uses for this sink.
 pub const NAME: &str = "rodio";
@@ -96,6 +100,10 @@ pub struct AudioControl {
 struct AudioTarget {
     sink: Weak<rodio::Sink>,
     envelope: Option<Arc<Envelope>>,
+    /// The active output's queue, behind the played-frame counter.
+    queued: Option<Arc<Queued>>,
+    /// The active output's sample rate, in hertz.
+    sample_rate: u32,
 }
 
 impl AudioControl {
@@ -114,21 +122,27 @@ impl AudioControl {
     pub(crate) fn handle_player_event(&self, event: &PlayerEvent) {
         match event {
             PlayerEvent::TrackChanged { .. } => self.track_changed(),
-            PlayerEvent::Seeked { .. } => {
-                let target = self.target.lock().unwrap_or_else(PoisonError::into_inner);
-                if let Some(sink) = target.sink.upgrade() {
-                    sink.stop();
-                }
-                self.reset_output.store(true, Ordering::SeqCst);
-                self.reset_processing.store(true, Ordering::SeqCst);
-                // Previous can rewind the current track after interrupting
-                // it. Release that gate, but never close it for a seek:
-                // the decoder is already sending audio from the new position.
-                self.track_changed();
-            }
+            PlayerEvent::Seeked { .. } => self.seeked(),
             PlayerEvent::Stopped { .. } => self.stopped(),
             _ => {}
         }
+    }
+
+    /// A seek moved the decoder: the queued audio belongs to the old
+    /// position, so it is discarded and the next packets open a fresh
+    /// queue. Spotify's events and the YouTube engine's own seeks both
+    /// run through here.
+    pub fn seeked(&self) {
+        let target = self.target.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(sink) = target.sink.upgrade() {
+            sink.stop();
+        }
+        self.reset_output.store(true, Ordering::SeqCst);
+        self.reset_processing.store(true, Ordering::SeqCst);
+        // Previous can rewind the current track after interrupting it.
+        // Release that gate, but never close it for a seek: the decoder is
+        // already sending audio from the new position.
+        self.track_changed();
     }
 
     /// Fades and discards the current output before a user-requested track
@@ -167,6 +181,15 @@ impl AudioControl {
         self.waiting_for_track.store(false, Ordering::SeqCst);
     }
 
+    /// Frames actually played since the current output attached, with that
+    /// output's own sample rate (they are at the device's rate). `None`
+    /// until a first output exists.
+    pub fn played_frames(&self) -> Option<(u64, u32)> {
+        let target = self.target.lock().unwrap_or_else(PoisonError::into_inner);
+        let queued = target.queued.as_ref()?;
+        Some((queued.frames(), target.sample_rate))
+    }
+
     fn waiting_for_track(&self) -> bool {
         self.waiting_for_track.load(Ordering::SeqCst)
     }
@@ -181,10 +204,20 @@ impl AudioControl {
         self.reset_output.swap(false, Ordering::SeqCst)
     }
 
-    fn register(&self, sink: &Arc<rodio::Sink>, envelope: Arc<Envelope>) {
+    /// Remembers the active output: the sink and its fade envelope, plus
+    /// the queue and rate behind the played-frame counter.
+    fn register(
+        &self,
+        sink: &Arc<rodio::Sink>,
+        envelope: Arc<Envelope>,
+        queued: &Arc<Queued>,
+        sample_rate: u32,
+    ) {
         let mut target = self.target.lock().unwrap_or_else(PoisonError::into_inner);
         target.sink = Arc::downgrade(sink);
         target.envelope = Some(envelope);
+        target.queued = Some(Arc::clone(queued));
+        target.sample_rate = sample_rate;
     }
 }
 
@@ -484,7 +517,8 @@ impl Output {
     fn attach(&mut self, (mixer, sample_rate): MadeMixer, control: &AudioControl) {
         let sink = Arc::new(rodio::Sink::connect_new(&mixer));
         let envelope = Envelope::open(sample_rate, INTERRUPT_FADE);
-        control.register(&sink, Arc::clone(&envelope));
+        let queued = Queued::new();
+        control.register(&sink, Arc::clone(&envelope), &queued, sample_rate);
         self.resampler = converter_to(sample_rate);
         self.mixer = mixer;
         self.sink = sink;
@@ -492,7 +526,7 @@ impl Output {
         self.envelope = envelope;
         // The first sound has silence to come up from instead of a hard edge.
         self.transport = Envelope::closed(sample_rate, TRANSPORT_FADE);
-        self.queued = Queued::new();
+        self.queued = queued;
         self.fed = false;
         self.last_write = None;
     }
@@ -691,6 +725,93 @@ impl RodioSink {
     }
 }
 
+/// What the YouTube engine's chain is built from: the same pieces the
+/// Spotify path's rodio chain uses.
+pub struct ChainConfig {
+    pub device: Option<String>,
+    pub buffer_ms: u32,
+    pub control: Arc<AudioControl>,
+    pub on_error: ErrorHook,
+    pub tap: Arc<AudioTap>,
+    pub eq: SharedEq,
+    /// The output's level.
+    pub volume: Box<dyn VolumeGetter + Send>,
+    /// The same level, read by the wrapper for the limiter ceiling.
+    pub ceiling: Box<dyn VolumeGetter + Send>,
+    pub normalisation: Arc<AtomicU64>,
+}
+
+/// Builds the rodio chain exactly the way `sink_builder` builds it for
+/// librespot: the visualizer and equalizer wrapper over the rodio sink,
+/// volume applied at the output, the limiter ceiling reading the level the
+/// tap cannot see.
+pub fn build_chain(config: ChainConfig) -> Box<dyn Sink> {
+    let ChainConfig {
+        device,
+        buffer_ms,
+        control,
+        on_error,
+        tap,
+        eq,
+        volume,
+        ceiling,
+        normalisation,
+    } = config;
+    let sink = Box::new(RodioSink::new(
+        device,
+        on_error,
+        volume,
+        buffer_ms,
+        Arc::clone(&control),
+    ));
+    Box::new(Tapped::new(
+        sink,
+        control,
+        tap,
+        ceiling,
+        false,
+        eq,
+        normalisation,
+    )) as Box<dyn Sink>
+}
+
+/// A volume source the YouTube engine feeds: the interface's 16-bit level,
+/// mapped to an attenuation factor exactly the way the Spotify path's soft
+/// mixer maps it.
+#[derive(Clone)]
+pub struct SharedVolume(Arc<SharedVolumeInner>);
+
+struct SharedVolumeInner {
+    level: AtomicU16,
+    ctrl: VolumeCtrl,
+}
+
+impl SharedVolume {
+    pub fn new(level: u16) -> Self {
+        Self(Arc::new(SharedVolumeInner {
+            level: AtomicU16::new(level),
+            ctrl: VolumeCtrl::Cubic(VolumeCtrl::DEFAULT_DB_RANGE),
+        }))
+    }
+
+    /// Sets the level the interface shows.
+    pub fn set(&self, level: u16) {
+        self.0.level.store(level, Ordering::Relaxed);
+    }
+
+    /// A getter for the chain: one for the output, one for the limiter
+    /// ceiling, exactly like the Spotify path's two soft-volume getters.
+    pub fn getter(&self) -> Box<dyn VolumeGetter + Send> {
+        Box::new(self.clone())
+    }
+}
+
+impl VolumeGetter for SharedVolume {
+    fn attenuation_factor(&self) -> f64 {
+        self.0.ctrl.to_mapped(self.0.level.load(Ordering::Relaxed))
+    }
+}
+
 impl Sink for RodioSink {
     /// Never fails: an output that cannot open is reported by the first
     /// `write` instead (#623).
@@ -759,10 +880,12 @@ impl Sink for RodioSink {
         {
             let sink = Arc::new(rodio::Sink::connect_new(&output.mixer));
             let envelope = Envelope::rising(output.sample_rate, INTERRUPT_FADE);
-            self.control.register(&sink, Arc::clone(&envelope));
+            let queued = Queued::new();
+            self.control
+                .register(&sink, Arc::clone(&envelope), &queued, output.sample_rate);
             output.sink = sink;
             output.envelope = envelope;
-            output.queued = Queued::new();
+            output.queued = queued;
             output.resampler =
                 Resampler::new(SAMPLE_RATE, output.sample_rate, NUM_CHANNELS as usize);
             output.fed = false;
@@ -1281,7 +1404,7 @@ mod tests {
         let sink = Arc::new(sink);
         let (interrupt, transport) = wide_open();
         let queued = Queued::new();
-        control.register(&sink, Arc::clone(&interrupt));
+        control.register(&sink, Arc::clone(&interrupt), &queued, RATE);
         sink.append(chunk(500, &interrupt, &transport, &queued));
         assert_eq!(output.next(), Some(1.0));
 
@@ -1305,6 +1428,65 @@ mod tests {
     }
 
     #[test]
+    fn played_frames_report_what_left_the_queue_at_the_output_rate() {
+        let control = AudioControl::new(DEFAULT_BUFFER_MS);
+        assert_eq!(control.played_frames(), None, "nothing has played yet");
+
+        let (sink, mut output) = rodio::Sink::new();
+        let sink = Arc::new(sink);
+        let (interrupt, transport) = wide_open();
+        let queued = Queued::new();
+        control.register(&sink, Arc::clone(&interrupt), &queued, 48_000);
+        assert_eq!(control.played_frames(), Some((0, 48_000)));
+
+        sink.append(chunk(200, &interrupt, &transport, &queued));
+        output
+            .by_ref()
+            .take(10 * NUM_CHANNELS as usize)
+            .for_each(drop);
+        let (played, rate) = control.played_frames().expect("registered");
+        assert_eq!(rate, 48_000);
+        assert!(played > 0, "frames that left the queue count as played");
+        assert!(played < 200, "frames still queued do not count as played");
+    }
+
+    #[test]
+    fn a_seek_releases_the_gate_and_asks_for_a_fresh_queue() {
+        let control = AudioControl::new(DEFAULT_BUFFER_MS);
+        control.seeked();
+        assert!(!control.waiting_for_track());
+        assert!(control.take_processing_reset(), "the wrapper resets");
+        assert!(control.take_reset(), "the output queue resets");
+    }
+
+    #[test]
+    fn the_shared_volume_maps_exactly_like_the_spotify_mixer() {
+        let ctrl = VolumeCtrl::Cubic(VolumeCtrl::DEFAULT_DB_RANGE);
+        let volume = SharedVolume::new(32_768);
+        assert_eq!(volume.attenuation_factor(), ctrl.to_mapped(32_768));
+        volume.set(0);
+        assert_eq!(volume.attenuation_factor(), ctrl.to_mapped(0));
+    }
+
+    #[test]
+    fn the_youtube_chain_builds_without_an_output_device() {
+        let control = AudioControl::new(DEFAULT_BUFFER_MS);
+        let volume = SharedVolume::new(30_000);
+        let on_error: ErrorHook = Arc::new(|_| {});
+        let _chain = build_chain(ChainConfig {
+            device: None,
+            buffer_ms: DEFAULT_BUFFER_MS,
+            control,
+            on_error,
+            tap: crate::vis::AudioTap::new(),
+            eq: crate::eq::shared(),
+            volume: volume.getter(),
+            ceiling: volume.getter(),
+            normalisation: Arc::new(AtomicU64::new(1.0f64.to_bits())),
+        });
+    }
+
+    #[test]
     fn track_changes_and_position_updates_preserve_gapless_queued_audio() {
         use librespot_metadata::audio::item::{AudioItem, UniqueFields};
 
@@ -1312,7 +1494,7 @@ mod tests {
         let (sink, mut output) = rodio::Sink::new();
         let sink = Arc::new(sink);
         let (interrupt, transport) = wide_open();
-        control.register(&sink, Arc::clone(&interrupt));
+        control.register(&sink, Arc::clone(&interrupt), &Queued::new(), RATE);
         sink.append(chunk(500, &interrupt, &transport, &Queued::new()));
         assert_eq!(output.next(), Some(1.0));
         let track_id =

@@ -39,7 +39,7 @@ use librespot_playback::{
 use sha1::{Digest, Sha1};
 
 use crate::api::models::ArtistRef;
-use crate::sink::{AudioControl, ErrorHook, RodioSink};
+use crate::sink::{AudioControl, ChainConfig, ErrorHook, build_chain};
 use crate::vis::{AudioTap, Tapped};
 
 #[derive(Clone, Debug)]
@@ -771,22 +771,17 @@ fn sink_builder(
     let ceiling = mixer.get_soft_volume();
     (
         Box::new(move || {
-            let sink = Box::new(RodioSink::new(
+            build_chain(ChainConfig {
                 device,
-                report,
-                volume,
                 buffer_ms,
-                Arc::clone(&audio),
-            ));
-            Box::new(Tapped::new(
-                sink,
-                audio,
+                control: audio,
+                on_error: report,
                 tap,
-                ceiling,
-                false,
                 eq,
+                volume,
+                ceiling,
                 normalisation,
-            )) as Box<dyn Sink>
+            })
         }),
         Box::new(NoOpVolume),
     )
