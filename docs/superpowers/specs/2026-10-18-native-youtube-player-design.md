@@ -41,7 +41,8 @@ legacy Vorbis in WebM, plus seeking and stall recovery.
 
 - An actor owning the queue, `LocalState`, and resolution. Its outward
   interface is snapshot-based: `EngineEvent::State(LocalState)` and
-  `EngineEvent::SessionEnded` (`player_yt.rs:330-335`), consumed in
+  `EngineEvent::SessionEnded` (`EngineEvent` itself is defined in
+  `player.rs:330-333`; the engine produces both variants), consumed in
   `backend.rs:4131-4144` and applied in `app.rs`.
 - mpv specifics to remove: tool discovery (`find_tool`, 1145-1199), process
   spawn and args (111-132), the named-pipe IPC (`ipc_path` 1202-1212,
@@ -200,15 +201,23 @@ whole path before anything switches over.
 - `Seek { ms, seq }` uses `control.seeked()` (the transition extracted from
   `handle_player_event`), reopens at the target, and resumes. The engine's
   existing `seek_sequence` guard keeps duplicates harmless.
-- Pause stops feeding; the queued ~200 ms drains and the device parks. No
+- Pause stops feeding and parks the output through the same drain-and-park
+  path with the transport fade that Spotify mode's pause uses
+  (`sink.rs:719-739`); resume brings it back with the existing fade-in. No
   decoding happens until resume.
 - Position accounting: the chain counts frames actually played
-  (`AudioControl::played_frames()`, section 4.5). Position = the load/seek
-  base + played frames at 44.1 kHz, published every 500 ms and on demand,
-  preserving the UI's interpolation behavior.
+  (`AudioControl::played_frames()`, section 4.5) in device-rate frames, so
+  the worker converts with the output's own rate (`frames / rate`) rather
+  than assuming 44.1 kHz. The worker snapshots the counter whenever a track
+  starts, seeks, or renews; position = the snapshot's base time plus the
+  frames played since, published every 500 ms and on demand, preserving the
+  UI's interpolation behavior. (Interrupt and seek replace the output,
+  zeroing the counter; the snapshot covers natural track changes, which
+  keep one continuous output.)
 - End of track: when the source reports EOF, the worker waits until played
-  frames catch up to decoded frames (minus one chunk) and emits `Ended`,
-  which the engine routes into the existing repeat/advance code.
+  time catches up to the decoded duration (minus one chunk's worth) and
+  emits `Ended`, which the engine routes into the existing repeat/advance
+  code.
 - `Stop` drains briefly and pauses the device; `Shutdown` ends the thread
   (engine shutdown, reconnect, or the stage-2 escape switch).
 
@@ -217,9 +226,11 @@ whole path before anything switches over.
 - `src/sink.rs`:
   - `AudioControl::seeked()` becomes public; `handle_player_event`'s
     `Seeked` arm delegates to it (one implementation, two callers).
-  - `AudioControl::played_frames() -> u64` reads the current output's
-    `Queued` (registered when the sink (re)opens, extending `register()`),
-    returning `appended - queued`. It is 0 before the first output exists.
+  - `AudioControl::played_frames()` reads the current output's `Queued`
+    (registered when the sink (re)opens, extending `register()`) and
+    returns `appended - queued` together with the output's sample rate,
+    since those frames are at the device rate (`sink.rs:778-800`). It is
+    absent before the first output exists.
 - `src/player.rs`: a shared constructor (`sink::build_chain(...)`) builds
   the same composition `sink_builder`'s rodio path builds today
   (`Tapped` over `RodioSink`, `applies_volume` flag copied from that path,
@@ -272,18 +283,23 @@ whole path before anything switches over.
   Option<u64>`, taken from the chosen format's `mimeType` and
   `contentLength`. The yt-dlp fallback derives mime from the URL's own
   `mime=` query parameter and leaves length unknown.
+- The engine's own `CachedStream` (`player_yt.rs:298-302`) carries the same
+  two facts next to the URL, so cache hits and prefetches still give the
+  worker its format hint; a missing hint falls back to the URL's `mime=`
+  parameter.
 - Format preference and selection stay exactly as they are.
 
 ### 4.8 The probe command
 
-`musify.exe probe-audio <query> [seek-seconds]`: the query is one
-argument (quotes when it has spaces), and the optional trailing number is a
-seek target to exercise seeking after 5 seconds of playback. Wired exactly
-like `backfill-durations` (entrypoint `Control`, single-instance
+`musify.exe probe-audio <query>` plays normally; `musify.exe probe-audio
+seek=<seconds> <query>` additionally exercises seeking after 5 seconds of
+playback. The control channel's one-argument format
+(`single_instance.rs:289-342`) carries both as a single string, exactly the
+way `play-search` splits its own argument; the query follows the existing
+`search_text` validation (`single_instance.rs:357-362`). Wired exactly like
+`backfill-durations` (entrypoint `Control`, single-instance
 `ControlCommand` + parser + its test, `Action`, app control-command
-handling, backend `Command`/dispatch/worker/`Event`, app event apply);
-argument plumbing follows the existing `search_text`/`spotify_uri`
-parsers in `single_instance.rs:346-373`.
+handling, backend `Command`/dispatch/worker/`Event`, app event apply).
 
 Behavior: stops current YouTube playback, resolves the query
 (native-first, yt-dlp fallback), builds a chain of its own, and plays the
