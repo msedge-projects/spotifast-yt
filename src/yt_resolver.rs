@@ -259,8 +259,13 @@ pub(crate) struct NativeResolver {
 
 impl NativeResolver {
     pub(crate) fn new() -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
+        let mut builder = reqwest::Client::builder().timeout(REQUEST_TIMEOUT);
+        // A proxy for testing from a machine whose own address the CDN
+        // refuses; unset in normal use.
+        if let Ok(proxy) = std::env::var("MUSIFY_YT_PROXY") {
+            builder = builder.proxy(reqwest::Proxy::all(&proxy).context("unusable proxy")?);
+        }
+        let http = builder
             .build()
             .context("unable to build the YouTube HTTP client")?;
         Ok(Self {

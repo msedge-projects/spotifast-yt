@@ -158,12 +158,22 @@ impl RangeSource {
     /// Builds a source. `len` is the resolver's known length when it had
     /// one; the first response fills it in otherwise.
     pub fn new(url: impl Into<String>, len: Option<u64>) -> io::Result<Self> {
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .user_agent(USER_AGENT)
             // The shape mpv streams with; googlevideo's HTTP/2 handling
             // drops slow bodies where HTTP/1.1 streams steadily.
-            .http1_only()
+            .http1_only();
+        // A proxy for testing from a machine whose own address the CDN
+        // refuses; unset in normal use.
+        if let Ok(proxy) = std::env::var("MUSIFY_YT_PROXY") {
+            builder =
+                builder
+                    .proxy(reqwest::Proxy::all(&proxy).map_err(|error| {
+                        link(LinkFailure::Transport, format!("proxy: {error}"))
+                    })?);
+        }
+        let client = builder
             .build()
             .map_err(|error| link(LinkFailure::Transport, format!("HTTP client: {error}")))?;
         Ok(Self {
