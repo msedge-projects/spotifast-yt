@@ -433,6 +433,43 @@ fn map_decode(error: decode::Error) -> Failure {
     }
 }
 
+/// Decodes a few seconds of a stream and reports each channel's own level,
+/// for the `probe-audio` verb: what the source itself carries, measured
+/// through the same decoding playback uses, before any output.
+pub(crate) fn channel_balance(
+    url: &str,
+    length: Option<u64>,
+    hint: Option<&str>,
+) -> Result<String, String> {
+    let mut stream = open_stream(url, length, hint, 0).map_err(|failure| format!("{failure:?}"))?;
+    let target = u64::from(SAMPLE_RATE) * 3;
+    let mut frames = 0u64;
+    let (mut left, mut right) = (0.0f64, 0.0f64);
+    while frames < target {
+        match stream.next_chunk() {
+            Ok(Some(chunk)) => {
+                for frame in chunk.chunks_exact(2) {
+                    left += frame[0] * frame[0];
+                    right += frame[1] * frame[1];
+                }
+                frames += (chunk.len() / 2) as u64;
+            }
+            Ok(None) => break,
+            Err(error) => return Err(format!("{error}")),
+        }
+    }
+    if frames == 0 {
+        return Err("nothing decoded".to_string());
+    }
+    let milliseconds = frames * 1000 / u64::from(SAMPLE_RATE);
+    let rms = |sum: f64| (sum / frames as f64).sqrt();
+    Ok(format!(
+        "left rms {:.4}, right rms {:.4} over {milliseconds} ms",
+        rms(left),
+        rms(right)
+    ))
+}
+
 /// The chain's played-frame counter in milliseconds; zero while no output
 /// has attached yet.
 fn played_ms(control: &AudioControl) -> u64 {

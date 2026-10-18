@@ -4188,6 +4188,14 @@ impl Worker {
                 .map(|length| length.to_string())
                 .unwrap_or_else(|| "an unknown".to_string())
         );
+        match crate::yt_audio::worker::channel_balance(
+            &resolved.url,
+            resolved.content_length,
+            resolved.mime.as_deref(),
+        ) {
+            Ok(levels) => log::info!("Probe: channels {levels}"),
+            Err(error) => log::warn!("Probe: channel check could not run: {error}"),
+        }
 
         let control = crate::sink::AudioControl::new(config.buffer_ms);
         let volume = crate::sink::SharedVolume::new(config.initial_volume);
