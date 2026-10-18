@@ -85,6 +85,9 @@ struct Inner {
     /// The total length once known (resolver, Content-Range, or
     /// Content-Length).
     len: Option<u64>,
+    /// Bodies already reported (their first returned bytes); reset per
+    /// body, for the debug trace.
+    head_logged: bool,
     /// The open response body, opened lazily at `pos`.
     body: Option<Response>,
     /// Bytes that a range-ignoring server sent from the start of the file
@@ -113,6 +116,7 @@ impl RangeSource {
             inner: Mutex::new(Inner {
                 pos: 0,
                 len,
+                head_logged: false,
                 body: None,
                 pending_skip: 0,
             }),
@@ -150,6 +154,12 @@ impl RangeSource {
             .header(RANGE, format!("bytes={start}-"))
             .send()
             .map_err(|error| link(LinkFailure::Transport, format!("request failed: {error}")))?;
+        log::debug!(
+            "yt_audio: range {start}- answered {} {:?} (url {} bytes)",
+            response.status().as_u16(),
+            response.headers(),
+            url.len()
+        );
         let status = response.status();
         if matches!(
             status,
@@ -174,6 +184,7 @@ impl RangeSource {
         }
         inner.pos = start;
         inner.pending_skip = if whole_file { start } else { 0 };
+        inner.head_logged = false;
         inner.body = Some(response);
         Ok(())
     }
@@ -220,6 +231,14 @@ impl Read for RangeSource {
                 Ok(0) => return Ok(0),
                 Ok(read) => {
                     inner.pos += read as u64;
+                    if !inner.head_logged {
+                        inner.head_logged = true;
+                        let head: Vec<String> = buf[..read.min(16)]
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect();
+                        log::debug!("yt_audio: the body's first bytes are {}", head.join(" "));
+                    }
                     return Ok(read);
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
