@@ -214,6 +214,18 @@ pub struct IslandState {
 }
 
 impl IslandState {
+    /// The pill, fully settled, for a screenshot.
+    pub fn settle_pill(&mut self) {
+        self.visible = true;
+        self.open = false;
+        self.seen_at = f64::INFINITY;
+        self.appear = Tween {
+            from: 1.0,
+            to: 1.0,
+            ..Tween::default()
+        };
+    }
+
     /// The card, fully settled, for a screenshot or a test. The pointer
     /// grace never fires: a settled island is one nothing is leaving.
     pub fn settle_open(&mut self) {

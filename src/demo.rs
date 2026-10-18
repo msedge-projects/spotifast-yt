@@ -1127,6 +1127,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
             "island" => {
                 app.island_window = true;
             }
+            "island-pill" => {
+                app.island_window = true;
+                app.island.settle_pill();
+            }
             "island-open" => {
                 app.island_window = true;
                 app.island.settle_open();
