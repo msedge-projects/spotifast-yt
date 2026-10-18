@@ -25,6 +25,9 @@ use crate::theme::{self, Icon};
 
 /// The panel's width in logical points.
 pub const WIDTH: f32 = 376.0;
+/// The room around the panel inside its window: the rounded corners and
+/// the soft shadow live there, over whatever is behind the window.
+const MARGIN: f32 = 14.0;
 /// The panel's height with the player alone, and the equalizer's added
 /// block when it is open.
 const PLAYER_HEIGHT: f32 = 178.0;
@@ -36,10 +39,11 @@ const ART: f32 = 64.0;
 /// The equalizer's slider height.
 const BAND_HEIGHT: f32 = 64.0;
 
-/// The window's wanted size, for the equalizer's state.
+/// The window's wanted size, for the equalizer's state: the panel plus the
+/// light around it.
 pub fn window_size(settings: &crate::settings::Settings) -> Vec2 {
     let height = PLAYER_HEIGHT + if settings.eq_open { EQ_BLOCK } else { 0.0 };
-    vec2(WIDTH, height)
+    vec2(WIDTH, height) + Vec2::splat(MARGIN * 2.0)
 }
 
 /// A first guess at the window's size, before the display's scale is
@@ -54,11 +58,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     fit_window(&ctx, &app.settings);
     super::keys::handle(app, &ctx);
+    // Escape comes home, the way closing the classic player's window would.
+    if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+        app.actions.push(Action::ToggleWinampWindow);
+    }
     let palette = app.palette;
     let now = app.now_playing();
-    let rect = ui.max_rect();
+    let window = ui.max_rect();
+    let rect = window.shrink(MARGIN);
     paint_panel(ui, &palette, rect);
-    drag_anywhere(ui, rect);
+    drag_anywhere(ui, window);
     playing_row(app, ui, &palette, rect, now.as_ref());
     seek_row(app, ui, &palette, rect, now.as_ref());
     transport_row(app, ui, &palette, rect, now.as_ref());
@@ -101,9 +110,10 @@ fn rows(rect: Rect) -> (Rect, Rect, Rect) {
 
 /// The frosted panel: a soft shadow, the glass fill, a hairline edge.
 fn paint_panel(ui: &Ui, palette: &theme::Palette, rect: Rect) {
-    let radius = 22.0;
-    // The shadow, layered so the translucent edges stay soft.
-    for (grow, alpha) in [(16.0, 10u8), (9.0, 14), (3.0, 20)] {
+    let radius = 24.0;
+    // The shadow, layered so the translucent edges stay soft; it lives in
+    // the window's margin, over whatever is behind.
+    for (grow, alpha) in [(12.0, 10u8), (8.0, 14), (3.0, 22)] {
         ui.painter().rect_filled(
             rect.expand(grow),
             radius + grow,
@@ -112,13 +122,13 @@ fn paint_panel(ui: &Ui, palette: &theme::Palette, rect: Rect) {
     }
     let (top, bottom) = if palette.dark {
         (
-            Color32::from_rgba_unmultiplied(74, 96, 134, 216),
-            Color32::from_rgba_unmultiplied(18, 24, 36, 224),
+            Color32::from_rgba_unmultiplied(78, 100, 140, 196),
+            Color32::from_rgba_unmultiplied(16, 22, 34, 200),
         )
     } else {
         (
-            Color32::from_rgba_unmultiplied(222, 236, 255, 236),
-            Color32::from_rgba_unmultiplied(250, 252, 255, 204),
+            Color32::from_rgba_unmultiplied(228, 240, 255, 210),
+            Color32::from_rgba_unmultiplied(252, 253, 255, 172),
         )
     };
     // The light falls from the top in quiet steps: overlapping translucent
@@ -756,10 +766,10 @@ mod tests {
     fn the_window_grows_with_the_equalizer() {
         let mut settings = crate::settings::Settings::default();
         let closed = window_size(&settings);
-        assert_eq!(closed.x, WIDTH);
+        assert_eq!(closed.x, WIDTH + MARGIN * 2.0);
         settings.eq_open = true;
         let open = window_size(&settings);
-        assert_eq!(open.x, WIDTH);
+        assert_eq!(open.x, WIDTH + MARGIN * 2.0);
         assert!(open.y > closed.y, "the bands need their room");
         assert_eq!(initial_size(&settings), open);
     }
