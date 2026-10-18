@@ -1337,10 +1337,12 @@ impl Shell {
             app.note_input();
         }
         #[cfg(windows)]
-        if self.window_hwnd != 0 {
+        if self.window_hwnd != 0 && !app.settings.winamp_window {
             // The title strip wears the Mica material where Windows 11 can
             // give it: the strip reads as glass and the app's own tint is
-            // left off so it shows. Older Windows keeps the tint.
+            // left off so it shows. Older Windows keeps the tint. The mini
+            // player has no title strip, and the material would paint its
+            // square window corners dark, so it is left alone.
             if self.mica.is_none() {
                 let mica = musify::window::set_backdrop_mica(self.window_hwnd);
                 if mica {

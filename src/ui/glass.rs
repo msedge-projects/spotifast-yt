@@ -27,7 +27,7 @@ use crate::theme::{self, Icon};
 pub const WIDTH: f32 = 376.0;
 /// The room around the panel inside its window: the rounded corners and
 /// the soft shadow live there, over whatever is behind the window.
-const MARGIN: f32 = 14.0;
+const MARGIN: f32 = 18.0;
 /// The panel's height with the player alone, and the equalizer's added
 /// block when it is open.
 const PLAYER_HEIGHT: f32 = 178.0;
@@ -108,12 +108,12 @@ fn rows(rect: Rect) -> (Rect, Rect, Rect) {
     (art, seek, transport)
 }
 
-/// The frosted panel: a soft shadow, the glass fill, a hairline edge.
+/// The frosted panel: a soft shadow, the glass fill, its light.
 fn paint_panel(ui: &Ui, palette: &theme::Palette, rect: Rect) {
     let radius = 24.0;
     // The shadow, layered so the translucent edges stay soft; it lives in
     // the window's margin, over whatever is behind.
-    for (grow, alpha) in [(12.0, 10u8), (8.0, 14), (3.0, 22)] {
+    for (grow, alpha) in [(16.0, 12u8), (10.0, 20), (4.0, 28)] {
         ui.painter().rect_filled(
             rect.expand(grow),
             radius + grow,
@@ -122,13 +122,13 @@ fn paint_panel(ui: &Ui, palette: &theme::Palette, rect: Rect) {
     }
     let (top, bottom) = if palette.dark {
         (
-            Color32::from_rgba_unmultiplied(78, 100, 140, 196),
-            Color32::from_rgba_unmultiplied(16, 22, 34, 200),
+            Color32::from_rgba_unmultiplied(76, 98, 138, 152),
+            Color32::from_rgba_unmultiplied(12, 18, 28, 152),
         )
     } else {
         (
-            Color32::from_rgba_unmultiplied(228, 240, 255, 210),
-            Color32::from_rgba_unmultiplied(252, 253, 255, 172),
+            Color32::from_rgba_unmultiplied(234, 243, 255, 150),
+            Color32::from_rgba_unmultiplied(255, 255, 255, 96),
         )
     };
     // The light falls from the top in quiet steps: overlapping translucent
@@ -144,6 +144,30 @@ fn paint_panel(ui: &Ui, palette: &theme::Palette, rect: Rect) {
             ui.painter().rect_filled(band, radius, ink);
         }
     }
+    // The glass's own light: a sheen at the top corner and a bright edge
+    // above, a shade below, the way real glass catches a room.
+    let sheen = Color32::from_white_alpha(if palette.dark { 6 } else { 9 });
+    ui.painter()
+        .circle_filled(pos2(rect.left() + 96.0, rect.top() + 42.0), 110.0, sheen);
+    ui.painter()
+        .circle_filled(pos2(rect.left() + 96.0, rect.top() + 42.0), 64.0, sheen);
+    let edge = if palette.dark { 70 } else { 150 };
+    let shade = if palette.dark { 40 } else { 26 };
+    ui.painter().hline(
+        (rect.left() + radius * 0.6)..=(rect.right() - radius * 0.6),
+        rect.top() + 1.0,
+        Stroke::new(1.5, Color32::from_white_alpha(edge)),
+    );
+    ui.painter().hline(
+        (rect.left() + radius * 0.6)..=(rect.right() - radius * 0.6),
+        rect.bottom() - 0.5,
+        Stroke::new(1.0, Color32::from_black_alpha(shade)),
+    );
+    ui.painter().vline(
+        rect.left() + 0.75,
+        (rect.top() + radius * 0.6)..=(rect.bottom() - radius * 0.6),
+        Stroke::new(1.0, Color32::from_white_alpha(edge / 2 + 20)),
+    );
     ui.painter().rect_stroke(
         rect,
         radius,
@@ -241,7 +265,7 @@ fn playing_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rect,
             );
             theme::text(
                 &mut text_ui,
-                gettext(app.locale, "Double-click a song in the main window"),
+                gettext(app.locale, "Open the main window to pick something"),
                 theme::regular(12.0),
                 palette.secondary,
             );
@@ -356,12 +380,34 @@ fn seek_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rect, no
     );
 }
 
-/// Shuffle, previous, play, next, repeat, and the volume.
+/// Shuffle, previous, play, next, repeat, and the volume. With nothing
+/// playing it is a single way back to the window one picks music in.
 fn transport_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rect, now: Option<&NowPlaying>) {
     let (_, _, transport) = rows(rect);
-    let control = now.is_some_and(|now| now.can_control);
-    let playing = now.is_some_and(|now| now.playing);
-    let (shuffle, repeat) = now.map_or((false, RepeatMode::Off), |now| (now.shuffle, now.repeat));
+    let Some(now) = now else {
+        // The transport would be dead weight with nothing to control.
+        let pill = Rect::from_center_size(transport.center(), vec2(216.0, 36.0));
+        let response = glass_button(ui, pill, Id::new("glass-home"), palette);
+        let expand = Rect::from_center_size(
+            pos2(pill.left() + 30.0, pill.center().y),
+            Vec2::splat(16.0),
+        );
+        theme::paint_icon(ui, Icon::Expand, expand, 16.0, palette.text);
+        ui.painter().text(
+            pos2(expand.right() + 10.0, pill.center().y),
+            Align2::LEFT_CENTER,
+            gettext(app.locale, "Open the main window"),
+            theme::medium(12.5),
+            palette.text,
+        );
+        if response.clicked() {
+            app.actions.push(Action::ToggleWinampWindow);
+        }
+        return;
+    };
+    let control = now.can_control;
+    let playing = now.playing;
+    let (shuffle, repeat) = (now.shuffle, now.repeat);
 
     let sizes = [30.0, 36.0, 52.0, 36.0, 30.0];
     let gap = 6.0;
@@ -496,7 +542,7 @@ fn transport_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rec
         app.actions.push(Action::CycleRepeat);
     }
 
-    volume(app, ui, palette, transport, now);
+    volume(app, ui, palette, transport, Some(now));
 }
 
 /// The speaker and its glass track; a drag previews, a release commits.
