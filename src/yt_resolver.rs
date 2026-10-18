@@ -19,13 +19,21 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
+use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-/// A direct audio URL and how long it is known to live.
+/// A direct audio URL and everything known about that stream.
 pub(crate) struct Resolved {
     pub url: String,
     pub ttl: Duration,
+    /// The format's own mime type when the player response named one.
+    pub mime: Option<String>,
+    /// The stream's byte length when known.
+    pub content_length: Option<u64>,
+    /// The next-best candidates, best first, for a stream this engine
+    /// cannot open (each carries no fallbacks of its own).
+    pub fallbacks: Vec<Resolved>,
 }
 
 /// One YouTube Music search result: what a row needs to draw and play.
@@ -1253,38 +1261,126 @@ fn playlist_header(browse_id: &str, response: &Value) -> YtPlaylist {
     playlist
 }
 
-/// The best audio-only stream in a player response: m4a first, then the
-/// other audio formats, and never a ciphered format without a direct URL.
+/// The best audio-only streams in a player response, best first. Every
+/// format this engine can decode (AAC-LC, Opus, Vorbis) is scored by its
+/// effective bitrate and the highest wins; the next few travel along as
+/// fallbacks for a stream that will not open.
 fn pick_audio(response: &Value) -> Option<Resolved> {
     let formats = response
         .get("streamingData")?
         .get("adaptiveFormats")?
         .as_array()?;
-    let audio = |itag: i64| {
-        formats.iter().find(|format| {
-            format.get("itag").and_then(Value::as_i64) == Some(itag)
-                && format.get("url").and_then(Value::as_str).is_some()
-                && format
-                    .get("mimeType")
-                    .and_then(Value::as_str)
-                    .is_some_and(|mime| mime.starts_with("audio/"))
+    let duration_seconds = response
+        .get("videoDetails")
+        .and_then(|details| details.get("lengthSeconds"))
+        .and_then(number)
+        .unwrap_or(0);
+    let mut candidates: Vec<(u64, &Value)> = formats
+        .iter()
+        .filter(|format| format.get("url").and_then(Value::as_str).is_some())
+        .filter_map(|format| format_score(format, duration_seconds).map(|score| (score, format)))
+        .collect();
+    // Stable, so equally-scored formats keep the response's own order.
+    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+
+    let build = |format: &Value| -> Option<Resolved> {
+        let url = format.get("url").and_then(Value::as_str)?.to_string();
+        let ttl = url_ttl(&url);
+        Some(Resolved {
+            url,
+            ttl,
+            mime: format
+                .get("mimeType")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            content_length: format.get("contentLength").and_then(number),
+            fallbacks: Vec::new(),
         })
     };
-    let format = [140_i64, 251, 139]
+    let mut best = build(candidates.first()?.1)?;
+    best.fallbacks = candidates
         .iter()
-        .find_map(|itag| audio(*itag))
-        .or_else(|| {
-            formats.iter().find(|format| {
-                format.get("url").and_then(Value::as_str).is_some()
-                    && format
-                        .get("mimeType")
-                        .and_then(Value::as_str)
-                        .is_some_and(|mime| mime.starts_with("audio/"))
-            })
-        })?;
-    let url = format.get("url")?.as_str()?.to_string();
-    let ttl = url_ttl(&url);
-    Some(Resolved { url, ttl })
+        .skip(1)
+        .take(3)
+        .filter_map(|(_, format)| build(format))
+        .collect();
+    Some(best)
+}
+
+/// How good a format is, by effective bitrate; `None` for formats this
+/// engine cannot decode. The known itag tiers are scored from their public
+/// specs; anything else decodable scores by its declared bitrate, or by
+/// length over duration when that is missing.
+fn format_score(format: &Value, duration_seconds: u64) -> Option<u64> {
+    let mime = format.get("mimeType").and_then(Value::as_str)?;
+    if !mime.starts_with("audio/") {
+        return None;
+    }
+    let lower = mime.to_ascii_lowercase();
+    if !(lower.contains("mp4a") || lower.contains("opus") || lower.contains("vorbis")) {
+        return None;
+    }
+    let derived = if duration_seconds > 0 {
+        format
+            .get("contentLength")
+            .and_then(number)
+            .map(|length| length.saturating_mul(8) / duration_seconds)
+    } else {
+        None
+    };
+    let known = match format.get("itag").and_then(Value::as_i64) {
+        Some(141) => Some(256_000),
+        Some(251) => Some(160_000),
+        Some(140) => Some(128_000),
+        Some(250) => Some(70_000),
+        Some(249) => Some(50_000),
+        Some(139) => Some(48_000),
+        _ => None,
+    };
+    let mut score = known
+        .or_else(|| format.get("bitrate").and_then(number))
+        .or(derived)
+        .unwrap_or(64_000);
+    // High-efficiency AAC yields only its low-complexity core here, so it
+    // never outranks a stream this engine decodes in full.
+    if lower.contains("mp4a.40.5") || lower.contains("mp4a.40.29") {
+        score = score.min(48_000);
+    }
+    Some(score)
+}
+
+/// A number that YouTube sends as a JSON number or a string.
+fn number(value: &Value) -> Option<u64> {
+    value.as_u64().or_else(|| value.as_str()?.parse().ok())
+}
+
+/// One decoded query parameter of a googlevideo URL.
+fn url_query(url: &str, wanted: &str) -> Option<String> {
+    let query = url.split_once('?')?.1;
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == wanted).then(|| {
+            percent_decode_str(value)
+                .decode_utf8()
+                .map(|value| value.into_owned())
+                .unwrap_or_else(|_| value.to_string())
+        })
+    })
+}
+
+impl Resolved {
+    /// A URL without a player response behind it (the yt-dlp fallback):
+    /// what is known comes from googlevideo's own query.
+    pub fn from_url(url: String) -> Self {
+        let ttl = url_ttl(&url);
+        Self {
+            mime: url_query(&url, "mime"),
+            content_length: url_query(&url, "clen").and_then(|value| value.parse().ok()),
+            fallbacks: Vec::new(),
+            url,
+            ttl,
+        }
+    }
 }
 
 /// How long a googlevideo URL lives, from its own signed `expire`
@@ -1346,8 +1442,9 @@ mod tests {
     }
 
     #[test]
-    fn the_m4a_audio_format_is_picked_first() {
+    fn the_best_sounding_format_is_picked_first() {
         let response = json!({
+            "videoDetails": { "lengthSeconds": "200" },
             "streamingData": {
                 "adaptiveFormats": [
                     { "itag": 137, "mimeType": "video/mp4", "url": "https://x/video" },
@@ -1358,7 +1455,71 @@ mod tests {
             }
         });
         let stream = pick_audio(&response).expect("a stream");
+        assert!(stream.url.ends_with("/251"), "{}", stream.url);
+        assert_eq!(stream.mime.as_deref(), Some("audio/webm; codecs=\"opus\""));
+        let fallbacks: Vec<&str> = stream
+            .fallbacks
+            .iter()
+            .map(|stream| stream.url.as_str())
+            .collect();
+        assert_eq!(fallbacks.len(), 2, "{fallbacks:?}");
+        assert!(fallbacks[0].ends_with("/140"), "{fallbacks:?}");
+        assert!(fallbacks[1].ends_with("/139"), "{fallbacks:?}");
+    }
+
+    #[test]
+    fn a_256k_stream_leads_even_over_opus() {
+        let response = json!({
+            "videoDetails": { "lengthSeconds": "200" },
+            "streamingData": {
+                "adaptiveFormats": [
+                    { "itag": 251, "mimeType": "audio/webm; codecs=\"opus\"", "url": "https://x/251" },
+                    { "itag": 141, "mimeType": "audio/mp4; codecs=\"mp4a.40.2\"", "url": "https://x/141" },
+                ]
+            }
+        });
+        let stream = pick_audio(&response).expect("a stream");
+        assert!(stream.url.ends_with("/141"), "{}", stream.url);
+    }
+
+    #[test]
+    fn an_unknown_opus_format_scores_by_its_declared_bitrate() {
+        let response = json!({
+            "videoDetails": { "lengthSeconds": "200" },
+            "streamingData": {
+                "adaptiveFormats": [
+                    { "itag": 251, "mimeType": "audio/webm; codecs=\"opus\"", "url": "https://x/251" },
+                    { "itag": 774, "mimeType": "audio/webm; codecs=\"opus\"", "bitrate": "256000", "url": "https://x/774" },
+                ]
+            }
+        });
+        let stream = pick_audio(&response).expect("a stream");
+        assert!(stream.url.ends_with("/774"), "{}", stream.url);
+    }
+
+    #[test]
+    fn a_format_this_engine_cannot_decode_is_never_picked() {
+        let response = json!({
+            "videoDetails": { "lengthSeconds": "200" },
+            "streamingData": {
+                "adaptiveFormats": [
+                    { "itag": 999, "mimeType": "audio/mp4; codecs=\"ec-3\"", "bitrate": "999000", "url": "https://x/999" },
+                    { "itag": 140, "mimeType": "audio/mp4; codecs=\"mp4a.40.2\"", "url": "https://x/140" },
+                ]
+            }
+        });
+        let stream = pick_audio(&response).expect("a stream");
         assert!(stream.url.ends_with("/140"), "{}", stream.url);
+    }
+
+    #[test]
+    fn a_fallback_url_reports_its_own_mime_and_length() {
+        let stream = Resolved::from_url(
+            "https://x/v?mime=audio%2Fwebm&clen=9730538&expire=9999999999".to_string(),
+        );
+        assert_eq!(stream.mime.as_deref(), Some("audio/webm"));
+        assert_eq!(stream.content_length, Some(9_730_538));
+        assert!(stream.fallbacks.is_empty());
     }
 
     #[test]

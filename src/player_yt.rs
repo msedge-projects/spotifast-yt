@@ -1323,7 +1323,7 @@ async fn resolve_yt_dlp(yt_dlp: &Path, query: &str) -> Result<yt_resolver::Resol
         .arg("--default-search")
         .arg("ytsearch")
         .arg("-f")
-        .arg("bestaudio[ext=m4a]/bestaudio/best")
+        .arg("bestaudio/best")
         .arg("-g")
         .arg("--")
         .arg(query)
@@ -1352,10 +1352,7 @@ async fn resolve_yt_dlp(yt_dlp: &Path, query: &str) -> Result<yt_resolver::Resol
         .find(|line| line.starts_with("http"))
         .map(str::to_string)
         .ok_or_else(|| anyhow!("YouTube has no audio for this song"))?;
-    Ok(yt_resolver::Resolved {
-        url,
-        ttl: yt_resolver::DEFAULT_URL_TTL,
-    })
+    Ok(yt_resolver::Resolved::from_url(url))
 }
 
 #[cfg(test)]
