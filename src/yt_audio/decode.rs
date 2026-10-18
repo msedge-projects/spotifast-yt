@@ -17,7 +17,8 @@ use std::io;
 
 use symphonia::core::audio::{Channels, SampleBuffer};
 use symphonia::core::codecs::{
-    CODEC_TYPE_AAC, CODEC_TYPE_OPUS, CODEC_TYPE_VORBIS, Decoder as SymphoniaDecoder, DecoderOptions,
+    CODEC_TYPE_AAC, CODEC_TYPE_OPUS, CODEC_TYPE_VORBIS, CodecType, Decoder as SymphoniaDecoder,
+    DecoderOptions,
 };
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::{FormatOptions, Packet, SeekMode, SeekTo};
@@ -173,7 +174,7 @@ impl Stream {
                 spec: None,
             },
             codec => {
-                return Err(Error::Unsupported(format!("codec 0x{codec:x}")));
+                return Err(Error::Unsupported(format!("codec {codec:?}")));
             }
         };
 
@@ -276,7 +277,7 @@ impl FrameDecoder {
                 let reusable = *spec == Some(key)
                     && sample
                         .as_ref()
-                        .is_some_and(|sample| sample.capacity() >= buffer.capacity() as u64);
+                        .is_some_and(|sample| sample.capacity() >= buffer.capacity());
                 if !reusable {
                     *sample = Some(SampleBuffer::<f32>::new(
                         buffer.capacity() as u64,
@@ -297,14 +298,11 @@ impl FrameDecoder {
                 if out.len() < needed {
                     out.resize(needed, 0.0);
                 }
-                let decoded =
-                    decoder
-                        .decode(packet.buf(), OPUS_MAX_FRAMES, out)
-                        .map_err(|error| {
-                            SymphoniaError::DecodeError(format!(
-                                "the Opus decoder refused: {error}"
-                            ))
-                        })?;
+                let decoded = decoder
+                    .decode(packet.buf(), OPUS_MAX_FRAMES, out)
+                    .map_err(|_| {
+                        SymphoniaError::DecodeError("the Opus decoder refused the packet")
+                    })?;
                 Ok(&out[..decoded * *channels])
             }
         }
@@ -449,7 +447,7 @@ fn rate_checked_duration(
         .map(|frames| frames.saturating_mul(1000) / u64::from(rate))
 }
 
-fn codec_name(codec: u32) -> &'static str {
+fn codec_name(codec: CodecType) -> &'static str {
     match codec {
         CODEC_TYPE_AAC => "aac",
         CODEC_TYPE_OPUS => "opus",
@@ -458,7 +456,7 @@ fn codec_name(codec: u32) -> &'static str {
     }
 }
 
-fn container_for(hint: Option<&str>, codec: u32) -> &'static str {
+fn container_for(hint: Option<&str>, codec: CodecType) -> &'static str {
     if let Some(hint) = hint {
         if hint.contains("webm") || hint.contains("matroska") {
             return "webm";
@@ -626,8 +624,10 @@ mod tests {
     #[test]
     fn an_unreadable_stream_is_unsupported() {
         let bytes = vec![0u8; 256];
-        let error =
-            Stream::open(Mem(io::Cursor::new(bytes)), None).expect_err("garbage must not open");
+        let error = match Stream::open(Mem(io::Cursor::new(bytes)), None) {
+            Ok(_) => panic!("garbage must not open"),
+            Err(error) => error,
+        };
         assert!(
             matches!(error, Error::Unsupported(_)),
             "garbage became {error:?}"
