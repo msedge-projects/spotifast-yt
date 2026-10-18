@@ -719,6 +719,14 @@ pub struct SearchState {
     pub serial: u64,
     pub results: Loadable<SearchResults>,
     pub results_serial: u64,
+    /// The query the newest typed search asked. Its answer fills the
+    /// suggestion panel; the results page waits for a commit.
+    pub typed: Option<String>,
+    /// The live rows the typed search answered, for the panel. `results`
+    /// belongs to the page and only changes when the query is committed.
+    pub suggestions: Loadable<SearchResults>,
+    /// The typed search's playlist half, held until its catalogue arrives.
+    pub suggestions_playlists: Option<(u64, crate::api::models::Page<Playlist>)>,
     pub playlists: Option<(u64, crate::api::models::Page<Playlist>)>,
     pub catalogue_pending: bool,
     pub playlists_pending: bool,

@@ -839,6 +839,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>, show: Option<&str>) {
     // open, where in a real session it opens on its own once there is text.
     if page == Some("search") {
         app.search.suggestions_open = true;
+        // The panel draws from the typed run's own answer; the demo's
+        // page-level results stand in for it.
+        app.search.suggestions = app.search.results.clone();
     }
     for surface in show.unwrap_or("").split(',').map(str::trim) {
         match surface {

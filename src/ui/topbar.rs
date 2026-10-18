@@ -404,12 +404,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
             // The rows the live panel shows for what is typed and what the
-            // search has answered so far; they refresh as answers stream in.
+            // typed search has answered so far; a commit is what loads the
+            // page.
             let suggestions = if app.search.suggestions_open {
                 super::widgets::suggestion_rows(
                     &app.search.query,
                     &app.settings.search_history,
-                    match &app.search.results {
+                    match &app.search.suggestions {
                         crate::model::Loadable::Loaded(results) => Some(results),
                         _ => None,
                     },

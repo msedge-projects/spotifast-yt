@@ -5718,6 +5718,10 @@ impl App {
         self.search.serial += 1;
         self.search.committed = query.clone();
         self.search.committed_run = None;
+        // A commit takes the page over: the typed run's own answer is done.
+        self.search.typed = None;
+        self.search.suggestions = Loadable::NotLoaded;
+        self.search.suggestions_playlists = None;
         self.search.playlists = None;
         self.search.error = None;
         self.search.catalogue_pending = !query.is_empty();
@@ -5736,13 +5740,39 @@ impl App {
         });
     }
 
-    /// A search the debounce started while the user may still be typing.
+    /// A search the debounce started while the user may still be typing:
+    /// it answers into the suggestion panel only. The results page keeps
+    /// its last committed query until a commit lands (Enter, or a picked
+    /// row); emptying the field commits the empty query outright.
     fn run_typed_search(&mut self, query: String) {
-        let serial = self.search.serial;
-        self.run_search(query);
-        if self.search.serial != serial {
-            self.search.committed_run = Some((self.search.edit_run, true));
+        if query.is_empty() {
+            self.run_search(query);
+            self.search.typed = None;
+            self.search.suggestions = Loadable::NotLoaded;
+            self.search.suggestions_playlists = None;
+            return;
         }
+        // The run's own query: the panel's rows come from its answer, and
+        // the page's state is not touched at all.
+        let run = self.search.edit_run;
+        self.search.serial += 1;
+        let serial = self.search.serial;
+        self.search.typed = Some(query.clone());
+        self.search.suggestions_playlists = None;
+        // A submit in this run makes its entries permanent: typing on must
+        // not replace what Enter already recorded.
+        let committed_permanently = matches!(
+            self.search.committed_run,
+            Some((committed_run, false)) if committed_run == run
+        );
+        if !committed_permanently {
+            self.search.committed_run = Some((run, true));
+        }
+        // Stale answers for a committed query are dropped by the serial;
+        // nothing the page shows is loading any more.
+        self.search.catalogue_pending = false;
+        self.search.playlists_pending = false;
+        self.backend.api(ApiRequest::Search { query, serial });
     }
 
     /// Searches for what the field holds, ending its run of typing.
@@ -7225,7 +7255,10 @@ impl App {
                 serial,
                 split,
             } => {
-                if serial == self.search.serial && query == self.search.committed {
+                if serial == self.search.serial
+                    && query == self.search.committed
+                    && self.search.typed.as_deref() != Some(query.as_str())
+                {
                     self.search.catalogue_pending = true;
                     self.search.playlists_pending = split;
                 }
@@ -7274,7 +7307,29 @@ impl App {
                 serial,
                 result,
             } => {
-                if serial != self.search.serial || query != self.search.committed {
+                if serial != self.search.serial {
+                    return;
+                }
+                if self.search.typed.as_deref() == Some(query.as_str()) {
+                    // The typed run's playlist half joins the panel.
+                    match result {
+                        Ok(page) => {
+                            if let Loadable::Loaded(results) = &mut self.search.suggestions {
+                                results.playlists = Some(page);
+                            } else {
+                                // The catalogue half has not arrived; hold
+                                // the playlists for it.
+                                self.search.suggestions_playlists = Some((serial, page));
+                            }
+                        }
+                        Err(_) => {
+                            // A preview that could not run stays quiet; a
+                            // commit is what reports failures.
+                        }
+                    }
+                    return;
+                }
+                if query != self.search.committed {
                     return;
                 }
                 self.search.playlists_pending = false;
@@ -7292,7 +7347,33 @@ impl App {
                 serial,
                 result,
             } => {
-                if serial != self.search.serial || query != self.search.committed {
+                if serial != self.search.serial {
+                    return;
+                }
+                if self.search.typed.as_deref() == Some(query.as_str()) {
+                    // The typed run answers the panel; the page's results
+                    // wait for a commit.
+                    match result {
+                        Ok(results) => {
+                            let mut results = results;
+                            if let Some((playlists_serial, playlists)) =
+                                self.search.suggestions_playlists.take()
+                                && playlists_serial == serial
+                            {
+                                results.playlists = Some(playlists);
+                            }
+                            self.search.suggestions = Loadable::Loaded(results);
+                            self.remember_search(&query);
+                        }
+                        Err(_) => {
+                            // A preview that could not run stays quiet: the
+                            // panel keeps its hints, and a commit is what
+                            // asks (and reports) for real.
+                        }
+                    }
+                    return;
+                }
+                if query != self.search.committed {
                     return;
                 }
                 self.search.catalogue_pending = false;
@@ -18521,6 +18602,49 @@ mod tests {
         }
     }
 
+    /// Typing answers the panel, not the page: the results page keeps its
+    /// last committed query until Enter (or a picked row) commits one.
+    #[test]
+    fn typed_searches_fill_the_panel_and_the_page_waits_for_a_commit() {
+        let mut app = test_app("search-commit-split");
+        let serial = searching(&mut app, "committed");
+        answer_search(&mut app, "committed", serial);
+        assert!(
+            app.search.results.get().is_some(),
+            "the committed query shows"
+        );
+
+        // Typing runs a search of its own: the panel fills, the page does
+        // not change.
+        app.search.query = "committed and more".into();
+        app.run_typed_search("committed and more".into());
+        let serial = app.search.serial;
+        answer_search(&mut app, "committed and more", serial);
+        assert!(
+            app.search.suggestions.get().is_some(),
+            "the typed run answers the panel"
+        );
+        let shown = app
+            .search
+            .results
+            .get()
+            .expect("the page keeps its commit while typing");
+
+        assert_eq!(shown.tracks.as_ref().unwrap().items.len(), 1);
+
+        // A commit loads the page with its own answer.
+        submit_search(&mut app, "committed and more");
+        let serial = app.search.serial;
+        assert!(
+            app.search.suggestions.get().is_none(),
+            "the commit clears the panel's own answer"
+        );
+        answer_search(&mut app, "committed and more", serial);
+        assert_eq!(app.search.committed, "committed and more");
+        assert!(app.search.results.get().is_some(), "the commit loads the page");
+        app.backend.shutdown();
+    }
+
     #[test]
     fn both_search_failures_finish_loading_and_the_same_query_can_retry() {
         let mut app = test_app("search-both-fail");
@@ -18616,9 +18740,8 @@ mod tests {
         typed_search(&mut app, "abs");
         app.search.query = "absolutely".into();
         app.run_typed_search("absolutely".into());
-        let serial = app.search.serial;
         submit_search(&mut app, "absolutely");
-        assert_eq!(app.search.serial, serial);
+        let serial = app.search.serial;
         answer_search(&mut app, "absolutely", serial);
         assert_eq!(app.settings.search_history, ["absolutely"]);
         typed_search(&mut app, "absolutely sweet");
