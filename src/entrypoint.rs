@@ -784,12 +784,12 @@ const fn main_window_decorated(custom_titlebar: bool) -> bool {
     !custom_titlebar
 }
 
-/// The DWM caption colour for a tint: 0x00BBGGRR as Win32 wants it.
 /// DWMWA_COLOR_DEFAULT: the system's own title bar colouring, which is
 /// what lets the Mica material show through.
 #[cfg(windows)]
 const CAPTION_DEFAULT: u32 = 0xFFFF_FFFF;
 
+/// The DWM caption colour for a tint: 0x00BBGGRR as Win32 wants it.
 #[cfg(windows)]
 fn caption_colorref(tint: egui::Color32) -> u32 {
     let [r, g, b, _] = tint.to_array();
