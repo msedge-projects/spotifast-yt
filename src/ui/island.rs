@@ -287,11 +287,6 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     }
 
     let away = now - app.island.seen_at;
-    #[cfg(test)]
-    eprintln!(
-        "island step: now {now} hovered {hovered} away {away} open {} visible {}",
-        app.island.open, app.island.visible
-    );
     if app.island.visible && !app.island.open && away > GRACE_S && app.island.appear.done(now) {
         app.island.appear.retarget(0.0, 0.22, Ease::Quart, now);
         if app.island.appear.done(now) {
@@ -328,7 +323,7 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
 
 /// Opens the card.
 fn open_card(app: &mut App, now: f64) {
-    let dur = BASE_MS * rate(MORPH);
+    let dur = BASE_MS / 1000.0 * rate(MORPH);
     app.island.open = true;
     app.island.morph.retarget(1.0, dur, Ease::Quart, now);
     app.island.gather.retarget(1.0, dur, Ease::Linear, now);
@@ -336,9 +331,7 @@ fn open_card(app: &mut App, now: f64) {
 
 /// Folds the card back, with the close-only gather.
 fn close_card(app: &mut App, now: f64) {
-    #[cfg(test)]
-    eprintln!("island close_card at {now}");
-    let dur = BASE_MS * rate(MORPH);
+    let dur = BASE_MS / 1000.0 * rate(MORPH);
     app.island.open = false;
     app.island.morph.retarget(0.0, dur, Ease::Quart, now);
     app.island.gather.retarget(0.0, dur, Ease::Linear, now);
@@ -588,8 +581,6 @@ fn paint_track(app: &mut App, ui: &Ui, rect: Rect, p: f32, late: f32) {
 
 /// Restart, play, next, and the way home.
 fn paint_transport(app: &mut App, ui: &mut Ui, rect: Rect, p: f32, now: f64) {
-    #[cfg(test)]
-    eprintln!("island transport: p {p} now {now}");
     let palette = app.palette;
     let control = app.now_playing().is_some_and(|now| now.can_control);
     let playing = app.now_playing().is_some_and(|now| now.playing);
@@ -671,13 +662,8 @@ fn paint_transport(app: &mut App, ui: &mut Ui, rect: Rect, p: f32, now: f64) {
         if response.clicked() {
             app.actions.push(Action::IslandToMain);
         }
-        #[cfg(test)]
-        eprintln!(
-            "island restore: p {p}, hovered {}, clicked {}",
-            response.hovered(),
-            response.clicked()
-        );
     }
+}
 }
 
 /// The heart, and the beat when the like lands.
