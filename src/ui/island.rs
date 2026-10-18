@@ -287,6 +287,11 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     }
 
     let away = now - app.island.seen_at;
+    #[cfg(test)]
+    eprintln!(
+        "island step: now {now} hovered {hovered} away {away} open {} visible {}",
+        app.island.open, app.island.visible
+    );
     if app.island.visible && !app.island.open && away > GRACE_S && app.island.appear.done(now) {
         app.island.appear.retarget(0.0, 0.22, Ease::Quart, now);
         if app.island.appear.done(now) {
@@ -331,6 +336,8 @@ fn open_card(app: &mut App, now: f64) {
 
 /// Folds the card back, with the close-only gather.
 fn close_card(app: &mut App, now: f64) {
+    #[cfg(test)]
+    eprintln!("island close_card at {now}");
     let dur = BASE_MS * rate(MORPH);
     app.island.open = false;
     app.island.morph.retarget(0.0, dur, Ease::Quart, now);
