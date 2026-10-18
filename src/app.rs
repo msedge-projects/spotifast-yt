@@ -13619,7 +13619,7 @@ mod tests {
         window: egui::Rect,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
-        ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(window),
                 time: Some(1.0),
@@ -13627,7 +13627,10 @@ mod tests {
                 ..Default::default()
             },
             |ui| app.frame_ui(ui),
-        )
+        );
+        // The headed path uploads these; here they have nowhere to go.
+        output.textures_delta.clear();
+        output
     }
 
     fn glass_window(app: &App) -> egui::Rect {
