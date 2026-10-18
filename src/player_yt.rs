@@ -14,7 +14,7 @@
 //! song normally does not wait on a search at all.
 //!
 //! The engine owns the queue itself. librespot's Spirc advances tracks for
-//! the Premium engine; here mpv reports the end of a track, and the engine
+//! the Premium engine; here the playing backend reports the end, and the engine
 //! picks what plays next (the user's queued songs first, then the context,
 //! honouring repeat and shuffle) and pushes the new track through the same
 //! [`LocalState`] snapshots the interface already consumes.
@@ -22,7 +22,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -35,6 +35,8 @@ use crate::player::{
     EngineConfig, EngineEvent, Heard, Interrupted, LoadSpec, LocalState, LocalTrack, Notify,
     Playback, PlaybackResume, PlayerCommand, RepeatMode,
 };
+use crate::sink::{AudioControl, ChainConfig, ErrorHook, SharedVolume, build_chain};
+use crate::yt_audio::worker::{AudioEvent, Command as AudioCommand, Failure, Worker};
 use crate::yt_resolver;
 
 /// How long the yt-dlp fallback resolve may take before it is killed.
@@ -52,6 +54,26 @@ const PREVIOUS_RESTART_MS: u32 = 3_000;
 /// keeps a resolve clear of the transition between songs.
 const PREFETCH_DELAY: Duration = Duration::from_secs(10);
 
+/// Which playback backend this session runs: the app's own in-process
+/// engine is the default, and `MUSIFY_YT_PLAYER=mpv` selects the child
+/// process kept for the transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackendChoice {
+    Native,
+    Mpv,
+}
+
+fn backend_from(value: Option<&str>) -> BackendChoice {
+    match value {
+        Some(value) if value.eq_ignore_ascii_case("mpv") => BackendChoice::Mpv,
+        _ => BackendChoice::Native,
+    }
+}
+
+fn chosen_backend() -> BackendChoice {
+    backend_from(std::env::var("MUSIFY_YT_PLAYER").ok().as_deref())
+}
+
 /// The engine's actor messages: commands from the interface, mpv's events,
 /// finished resolves, and the end of the pipe.
 enum Message {
@@ -66,6 +88,8 @@ enum Message {
         uri: String,
         result: Result<yt_resolver::Resolved, String>,
     },
+    /// Takes the in-process engine down with the rest.
+    Shutdown,
     Closed,
 }
 
@@ -80,7 +104,7 @@ pub struct YtEngine {
     device_id: String,
     state: Arc<Mutex<LocalState>>,
     messages: mpsc::UnboundedSender<Message>,
-    child: Mutex<tokio::process::Child>,
+    child: Mutex<Option<tokio::process::Child>>,
     /// What was playing when mpv went away, for the engine that replaces
     /// this one.
     interrupted: Arc<Mutex<Option<Interrupted>>>,
@@ -97,41 +121,7 @@ impl YtEngine {
                  and make sure it is on PATH."
             )
         })?;
-        let mpv = find_tool("mpv").ok_or_else(|| {
-            anyhow!(
-                "YouTube playback needs mpv. Install mpv and make sure mpv.exe is on PATH or \
-                 in %LOCALAPPDATA%\\Programs\\mpv."
-            )
-        })?;
         let resolver = Arc::new(yt_resolver::NativeResolver::new()?);
-
-        let pipe = ipc_path();
-        #[cfg(not(windows))]
-        let _ = std::fs::remove_file(&pipe);
-        let mut command = tokio::process::Command::new(&mpv);
-        command
-            .arg("--idle=yes")
-            .arg("--no-video")
-            .arg("--no-terminal")
-            .arg("--really-quiet")
-            .arg(format!("--input-ipc-server={}", pipe.display()))
-            .arg("--ytdl=no")
-            // A stalled stream fails in twenty seconds instead of a
-            // minute, and short drops reconnect instead of ending the
-            // track: both give the retry a healthy baseline to resume.
-            .arg("--network-timeout=20")
-            .arg("--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5")
-            .arg(format!(
-                "--volume={}",
-                volume_percent(config.initial_volume)
-            ))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        let child = command.spawn().context("unable to start mpv")?;
-        let stream = connect_ipc(&pipe).await?;
-        let (reader, writer) = tokio::io::split(stream);
 
         let state = Arc::new(Mutex::new(LocalState {
             volume: config.initial_volume,
@@ -142,10 +132,99 @@ impl YtEngine {
         let (mpv_lines, mpv_receiver) = mpsc::unbounded_channel();
         let interrupted: Arc<Mutex<Option<Interrupted>>> = Arc::default();
         let shutting_down = Arc::new(AtomicBool::new(false));
+
+        // Two backends: the app's own engine (the default) and mpv, kept
+        // for the transition behind `MUSIFY_YT_PLAYER=mpv`.
+        let (child, native, audio) = match chosen_backend() {
+            BackendChoice::Mpv => {
+                let mpv = find_tool("mpv").ok_or_else(|| {
+                    anyhow!(
+                        "YouTube playback needs mpv. Install mpv and make sure mpv.exe is on \
+                         PATH or in %LOCALAPPDATA%\\Programs\\mpv."
+                    )
+                })?;
+                let pipe = ipc_path();
+                #[cfg(not(windows))]
+                let _ = std::fs::remove_file(&pipe);
+                let mut command = tokio::process::Command::new(&mpv);
+                command
+                    .arg("--idle=yes")
+                    .arg("--no-video")
+                    .arg("--no-terminal")
+                    .arg("--really-quiet")
+                    .arg(format!("--input-ipc-server={}", pipe.display()))
+                    .arg("--ytdl=no")
+                    // A stalled stream fails in twenty seconds instead of
+                    // a minute, and short drops reconnect instead of
+                    // ending the track: both give the retry a healthy
+                    // baseline to resume.
+                    .arg("--network-timeout=20")
+                    .arg("--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5")
+                    .arg(format!(
+                        "--volume={}",
+                        volume_percent(config.initial_volume)
+                    ))
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .kill_on_drop(true);
+                let child = command.spawn().context("unable to start mpv")?;
+                let stream = connect_ipc(&pipe).await?;
+                let (reader, writer) = tokio::io::split(stream);
+                tokio::spawn(run_writer(writer, mpv_receiver));
+                tokio::spawn(run_reader(reader, messages.clone()));
+                (Some(child), None, None)
+            }
+            BackendChoice::Native => {
+                let control = AudioControl::new(config.buffer_ms);
+                let volume = SharedVolume::new(config.initial_volume);
+                let (audio_tx, audio_rx) = mpsc::unbounded_channel();
+                let device = config.audio_device.clone();
+                let buffer_ms = config.buffer_ms;
+                let tap = Arc::clone(&config.tap);
+                let eq = Arc::clone(&config.eq);
+                let chain_control = Arc::clone(&control);
+                let chain_volume = volume.clone();
+                let normalisation = Arc::new(AtomicU64::new(1.0f64.to_bits()));
+                let error_state = Arc::clone(&state);
+                let error_notify = Arc::clone(&notify);
+                let on_error: ErrorHook = Arc::new(move |message: String| {
+                    let snapshot = {
+                        let mut current = error_state
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        current.error = Some(message);
+                        current.clone()
+                    };
+                    (error_notify)(EngineEvent::State(snapshot));
+                });
+                let worker = Worker::spawn(
+                    move || {
+                        build_chain(ChainConfig {
+                            device,
+                            buffer_ms,
+                            control: chain_control,
+                            on_error,
+                            tap,
+                            eq,
+                            volume: chain_volume.getter(),
+                            ceiling: chain_volume.getter(),
+                            normalisation,
+                        })
+                    },
+                    Arc::clone(&control),
+                    audio_tx,
+                )
+                .context("unable to start the in-process audio engine")?;
+                (None, Some(NativePlayer { worker, volume }), Some(audio_rx))
+            }
+        };
+
         let actor = Actor {
             state: Arc::clone(&state),
             notify: Arc::clone(&notify),
             mpv: mpv_lines,
+            native,
             messages: messages.clone(),
             interrupted: Arc::clone(&interrupted),
             shutting_down: Arc::clone(&shutting_down),
@@ -164,14 +243,13 @@ impl YtEngine {
             awaiting: false,
             target_ms: 0,
             told_ms: 0,
+            pending_fade: false,
             url_cache: HashMap::new(),
             prefetching: None,
             retried_uri: None,
             resolve_failures: 0,
         };
-        tokio::spawn(run_actor(actor, receiver));
-        tokio::spawn(run_writer(writer, mpv_receiver));
-        tokio::spawn(run_reader(reader, messages.clone()));
+        tokio::spawn(run_actor(actor, receiver, audio));
 
         notify(EngineEvent::State(
             state
@@ -208,9 +286,13 @@ impl YtEngine {
     /// [`Self::resume_point`].
     pub fn shutdown(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
-        if let Ok(mut child) = self.child.lock() {
+        if let Ok(mut child) = self.child.lock()
+            && let Some(child) = child.as_mut()
+        {
             let _ = child.start_kill();
         }
+        // The in-process engine takes the same message the actor folds.
+        let _ = self.messages.send(Message::Shutdown);
     }
 
     pub fn interrupted(&self) -> Option<Interrupted> {
@@ -294,11 +376,43 @@ impl Entry {
     }
 }
 
-/// A direct URL kept for a while, with the life YouTube gave it.
+/// A direct URL kept for a while, with the life YouTube gave it and the
+/// facts the in-process engine loads it with.
 struct CachedStream {
     url: String,
     at: Instant,
     ttl: Duration,
+    mime: Option<String>,
+    content_length: Option<u64>,
+}
+
+/// The in-process backend: the worker thread and the level its chain
+/// applies.
+struct NativePlayer {
+    worker: Worker,
+    volume: SharedVolume,
+}
+
+impl NativePlayer {
+    /// Hands the worker one stream to play.
+    fn load(
+        &self,
+        url: &str,
+        length: Option<u64>,
+        mime: Option<&str>,
+        position_ms: u32,
+        fade: bool,
+        seq: u64,
+    ) {
+        self.worker.send(AudioCommand::Load {
+            url: url.to_string(),
+            length,
+            hint: mime.map(str::to_string),
+            position_ms: u64::from(position_ms),
+            seq,
+            fade_out: fade,
+        });
+    }
 }
 
 /// The actor owns the queue and folds mpv's events into [`LocalState`].
@@ -307,6 +421,8 @@ struct Actor {
     notify: Notify,
     /// Newline-delimited JSON to mpv.
     mpv: mpsc::UnboundedSender<String>,
+    /// The in-process engine, when it is the one playing.
+    native: Option<NativePlayer>,
     /// Its own message channel, so a finished resolve can come back in.
     messages: mpsc::UnboundedSender<Message>,
     /// What was playing when mpv went away, for the engine that replaces
@@ -338,6 +454,9 @@ struct Actor {
     target_ms: u32,
     /// The last position the interface was told, to throttle snapshots.
     told_ms: u32,
+    /// Whether the change being set up is user-requested (the old sound is
+    /// faded out) rather than the tail of the previous song.
+    pending_fade: bool,
     /// Direct URLs resolved recently, by track URI: a song starting from
     /// here skips the resolver, and its CPU cost, entirely.
     url_cache: HashMap<String, CachedStream>,
@@ -352,17 +471,43 @@ struct Actor {
     resolve_failures: u32,
 }
 
-async fn run_actor(mut actor: Actor, mut messages: mpsc::UnboundedReceiver<Message>) {
-    actor.observe();
-    while let Some(message) = messages.recv().await {
-        match message {
-            Message::Command(command) => actor.apply(command),
-            Message::Mpv(value) => actor.mpv_event(&value),
-            Message::Resolved { id, result } => actor.resolved(id, result),
-            Message::Prefetched { uri, result } => actor.prefetched(uri, result),
-            Message::Closed => {
-                actor.closed();
-                return;
+async fn run_actor(
+    mut actor: Actor,
+    mut messages: mpsc::UnboundedReceiver<Message>,
+    mut audio: Option<mpsc::UnboundedReceiver<AudioEvent>>,
+) {
+    if actor.native.is_none() {
+        actor.observe();
+    }
+    loop {
+        tokio::select! {
+            message = messages.recv() => {
+                let Some(message) = message else { return; };
+                match message {
+                    Message::Command(command) => actor.apply(command),
+                    Message::Mpv(value) => actor.mpv_event(&value),
+                    Message::Resolved { id, result } => actor.resolved(id, result),
+                    Message::Prefetched { uri, result } => actor.prefetched(uri, result),
+                    Message::Shutdown => actor.silence(),
+                    Message::Closed => {
+                        actor.closed();
+                        return;
+                    }
+                }
+            }
+            event = async {
+                match audio.as_mut() {
+                    Some(receiver) => receiver.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match event {
+                    Some(event) => actor.audio_event(event),
+                    None => {
+                        actor.closed();
+                        return;
+                    }
+                }
             }
         }
     }
@@ -427,7 +572,7 @@ impl Actor {
     fn apply(&mut self, command: PlayerCommand) {
         match command {
             PlayerCommand::Toggle => self.toggle(),
-            PlayerCommand::Next => self.advance(),
+            PlayerCommand::Next => self.advance(true),
             PlayerCommand::Previous => self.previous(),
             PlayerCommand::ClearQueue => self.manual.clear(),
             PlayerCommand::AddToQueue { uri, track } => {
@@ -504,11 +649,13 @@ impl Actor {
         self.from_list = true;
         self.current = Some(self.list[index].clone());
         self.want_play = spec.play;
-        self.start(spec.position_ms);
+        self.start(spec.position_ms, true);
     }
 
-    /// Starts the current song: state first, then the resolve.
-    fn start(&mut self, position_ms: u32) {
+    /// Starts the current song: state first, then the resolve. `fade` says
+    /// whether the old sound is faded out first (the user chose this song)
+    /// or whether this follows the last song's end.
+    fn start(&mut self, position_ms: u32, fade: bool) {
         let Some(entry) = self.current.clone() else {
             return;
         };
@@ -518,6 +665,7 @@ impl Actor {
         self.play_id = self.play_id.wrapping_add(1);
         let id = self.play_id;
         self.loaded = false;
+        self.pending_fade = fade;
         self.target_ms = position_ms;
         self.told_ms = position_ms;
         {
@@ -552,17 +700,29 @@ impl Actor {
             // Metadata is missing: park the item as loading so the
             // interface fetches the track and answers with
             // SetTrackMetadata. Nothing keeps playing meanwhile.
-            self.send(json!(["stop"]));
+            self.park();
             return;
         }
-        if let Some(url) = self.cached_url(&entry.uri) {
+        if let Some(cached) = self.cached_stream(&entry.uri) {
             // Resolved already, by the prefetch made while the last song
             // played, or by an earlier play: start without yt-dlp.
             log::info!("YouTube: reusing a cached URL for {}", entry.track.title);
             self.awaiting = false;
-            self.send(json!(["loadfile", url, "replace"]));
-            if position_ms > 0 {
-                self.seek_command(position_ms);
+            if let Some(native) = &self.native {
+                native.load(
+                    &cached.url,
+                    cached.content_length,
+                    cached.mime.as_deref(),
+                    position_ms,
+                    fade,
+                    id,
+                );
+            } else {
+                let url = cached.url.clone();
+                self.send(json!(["loadfile", url, "replace"]));
+                if position_ms > 0 {
+                    self.seek_command(position_ms);
+                }
             }
             return;
         }
@@ -594,14 +754,24 @@ impl Actor {
         match result {
             Ok(stream) => {
                 self.resolve_failures = 0;
-                let url = stream.url.clone();
                 let uri = self.current.as_ref().map(|entry| entry.uri.clone());
                 if let Some(uri) = uri {
-                    self.store_url(uri, stream);
+                    self.store_url(uri, &stream);
                 }
-                self.send(json!(["loadfile", url, "replace"]));
-                if self.target_ms > 0 {
-                    self.seek_command(self.target_ms);
+                if let Some(native) = &self.native {
+                    native.load(
+                        &stream.url,
+                        stream.content_length,
+                        stream.mime.as_deref(),
+                        self.target_ms,
+                        self.pending_fade,
+                        id,
+                    );
+                } else {
+                    self.send(json!(["loadfile", stream.url.clone(), "replace"]));
+                    if self.target_ms > 0 {
+                        self.seek_command(self.target_ms);
+                    }
                 }
             }
             Err(message) => {
@@ -617,7 +787,7 @@ impl Actor {
                         .map(|entry| entry.track.title.as_str())
                         .unwrap_or("an unnamed song");
                     log::info!("YouTube: skipping {title} ({message})");
-                    self.advance();
+                    self.advance(false);
                 } else {
                     self.fail(&message);
                 }
@@ -635,15 +805,24 @@ impl Actor {
         }
     }
 
-    fn store_url(&mut self, uri: String, stream: yt_resolver::Resolved) {
+    /// The cached record for `uri` when it is still fresh, for the
+    /// in-process engine which loads the mime and length too.
+    fn cached_stream(&self, uri: &str) -> Option<&CachedStream> {
+        let cached = self.url_cache.get(uri)?;
+        (cached.at.elapsed() < cached.ttl).then_some(cached)
+    }
+
+    fn store_url(&mut self, uri: String, stream: &yt_resolver::Resolved) {
         self.url_cache
             .retain(|_, cached| cached.at.elapsed() < cached.ttl);
         self.url_cache.insert(
             uri,
             CachedStream {
-                url: stream.url,
+                url: stream.url.clone(),
                 at: Instant::now(),
                 ttl: stream.ttl,
+                mime: stream.mime.clone(),
+                content_length: stream.content_length,
             },
         );
     }
@@ -655,7 +834,7 @@ impl Actor {
             self.prefetching = None;
         }
         if let Ok(stream) = result {
-            self.store_url(uri, stream);
+            self.store_url(uri, &stream);
         }
     }
 
@@ -751,9 +930,22 @@ impl Actor {
         {
             return;
         }
+        self.send(json!(["set_property", "pause", !self.want_play]));
+        self.track_started();
+    }
+
+    /// The current song is playing: the shared tail of mpv's file-loaded
+    /// and the in-process engine's opened report.
+    fn track_started(&mut self) {
         self.loaded = true;
         self.awaiting = false;
-        self.send(json!(["set_property", "pause", !self.want_play]));
+        if !self.want_play
+            && let Some(native) = &self.native
+        {
+            // mpv is told to pause just above; the worker needs the same
+            // order when the song began loading while paused.
+            native.worker.send(AudioCommand::Pause);
+        }
         let mut state = self
             .state
             .lock()
@@ -784,9 +976,9 @@ impl Actor {
                 if self.loaded && self.current.is_some() {
                     self.loaded = false;
                     if self.repeat == RepeatMode::Track {
-                        self.start(0);
+                        self.start(0, false);
                     } else {
-                        self.advance();
+                        self.advance(false);
                     }
                 }
             }
@@ -810,7 +1002,7 @@ impl Actor {
                     if self.retried_uri.as_deref() != Some(entry.uri.as_str()) {
                         log::warn!("YouTube: load failed ({detail}), resolving again");
                         self.retried_uri = Some(entry.uri.clone());
-                        self.start(position);
+                        self.start(position, false);
                         return;
                     }
                 }
@@ -822,12 +1014,13 @@ impl Actor {
     }
 
     /// The next song: the user's queue first, then the context. Repeat and
-    /// shuffle apply to the context only, as they do in Spotify.
-    fn advance(&mut self) {
+    /// shuffle apply to the context only, as they do in Spotify. `fade`
+    /// rides along to `start`: the user asked for this pick.
+    fn advance(&mut self, fade: bool) {
         if let Some(entry) = self.manual.pop_front() {
             self.from_list = false;
             self.current = Some(entry);
-            self.start(0);
+            self.start(0, fade);
             return;
         }
         let next = next_list_index(
@@ -853,7 +1046,7 @@ impl Actor {
                 self.cursor = Some(index);
                 self.from_list = true;
                 self.current = Some(self.list[index].clone());
-                self.start(0);
+                self.start(0, fade);
             }
             None => self.stop_at_end(),
         }
@@ -875,7 +1068,7 @@ impl Actor {
         {
             self.cursor = Some(cursor - 1);
             self.current = Some(self.list[cursor - 1].clone());
-            self.start(0);
+            self.start(0, true);
             return;
         }
         self.seek(0);
@@ -906,7 +1099,7 @@ impl Actor {
         if !self.loaded && !self.awaiting && self.current.is_some() {
             self.want_play = true;
             self.retried_uri = None;
-            self.start(self.target_ms);
+            self.start(self.target_ms, true);
             return;
         }
         let playback = self
@@ -918,7 +1111,7 @@ impl Actor {
             Playback::Playing => {
                 self.want_play = false;
                 if self.loaded {
-                    self.send(json!(["set_property", "pause", true]));
+                    self.pause(true);
                 }
                 let mut state = self
                     .state
@@ -930,7 +1123,7 @@ impl Actor {
             Playback::Paused => {
                 self.want_play = true;
                 if self.loaded {
-                    self.send(json!(["set_property", "pause", false]));
+                    self.pause(false);
                 }
                 let mut state = self
                     .state
@@ -961,7 +1154,13 @@ impl Actor {
         let position = position_ms.min(duration.saturating_sub(1));
         self.target_ms = position;
         if self.loaded {
-            self.seek_command(position);
+            match &self.native {
+                Some(native) => native.worker.send(AudioCommand::Seek {
+                    position_ms: u64::from(position),
+                    seq: self.play_id,
+                }),
+                None => self.seek_command(position),
+            }
         }
         let mut state = self
             .state
@@ -983,7 +1182,10 @@ impl Actor {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .volume = volume;
-        self.send(json!(["set_property", "volume", volume_percent(volume)]));
+        match &self.native {
+            Some(native) => native.volume.set(volume),
+            None => self.send(json!(["set_property", "volume", volume_percent(volume)])),
+        }
         self.publish();
     }
 
@@ -1005,7 +1207,7 @@ impl Actor {
         }
         if start_current {
             // The parked song can play now.
-            self.start(0);
+            self.start(0, true);
         }
     }
 
@@ -1065,13 +1267,35 @@ impl Actor {
         }
     }
 
+    /// Pauses or resumes whichever backend is playing.
+    fn pause(&self, paused: bool) {
+        let command = if paused {
+            AudioCommand::Pause
+        } else {
+            AudioCommand::Resume
+        };
+        match &self.native {
+            Some(native) => native.worker.send(command),
+            None => self.send(json!(["set_property", "pause", paused])),
+        }
+    }
+
+    /// Silences whatever is playing without touching the state: a song is
+    /// about to be parked or replaced.
+    fn park(&self) {
+        match &self.native {
+            Some(native) => native.worker.send(AudioCommand::Stop),
+            None => self.send(json!(["stop"])),
+        }
+    }
+
     fn fail(&mut self, message: &str) {
-        // The song that failed is not what is heard any more: mpv must
-        // not keep playing whatever it had while the state reports the
+        // The song that failed is not what is heard any more: the playing
+        // backend must not keep making sound while the state reports the
         // failure.
         self.loaded = false;
         self.awaiting = false;
-        self.send(json!(["stop"]));
+        self.park();
         let mut state = self
             .state
             .lock()
@@ -1108,6 +1332,112 @@ impl Actor {
         self.publish();
         if !self.shutting_down.load(Ordering::SeqCst) {
             (self.notify)(EngineEvent::SessionEnded);
+        }
+    }
+
+    /// The in-process engine's reports, folded into the same state the mpv
+    /// events feed.
+    fn audio_event(&mut self, event: AudioEvent) {
+        match event {
+            AudioEvent::Opened { seq, opened, .. } => {
+                if seq != self.play_id {
+                    return;
+                }
+                self.track_started();
+                // The container's own duration covers songs whose cached
+                // metadata had none, the way mpv's duration property did.
+                let duration = opened
+                    .duration_ms
+                    .map(|ms| ms.min(u64::from(u32::MAX)) as u32)
+                    .filter(|duration| *duration > 0);
+                if let Some(duration) = duration {
+                    let changed = {
+                        let mut state = self
+                            .state
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        match state.track.as_mut() {
+                            Some(track) if track.duration_ms != duration => {
+                                track.duration_ms = duration;
+                                true
+                            }
+                            _ => false,
+                        }
+                    };
+                    if changed {
+                        self.publish();
+                    }
+                }
+            }
+            AudioEvent::Positioned { seq, position_ms } => {
+                if seq != self.play_id {
+                    return;
+                }
+                let position = position_ms.min(u64::from(u32::MAX)) as u32;
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if state.playback != Playback::Playing {
+                    // A paused worker still reports a position.
+                    return;
+                }
+                state.position_ms = position;
+                state.position_at = Some(Instant::now());
+                drop(state);
+                if position.abs_diff(self.told_ms) >= POSITION_NOTIFY_MS {
+                    self.told_ms = position;
+                    self.publish();
+                }
+            }
+            AudioEvent::Ended { seq } => {
+                if seq != self.play_id || !self.loaded || self.current.is_none() {
+                    return;
+                }
+                self.loaded = false;
+                if self.repeat == RepeatMode::Track {
+                    self.start(0, false);
+                } else {
+                    self.advance(false);
+                }
+            }
+            AudioEvent::Failed {
+                seq,
+                failure,
+                position_ms,
+            } => {
+                if seq != self.play_id {
+                    return;
+                }
+                self.loaded = false;
+                let detail = match failure {
+                    Failure::Unsupported(detail) => detail,
+                    Failure::Stream(detail) => detail,
+                    Failure::Output(detail) => format!("the audio output stopped: {detail}"),
+                };
+                let position = position_ms.min(u64::from(u32::MAX)) as u32;
+                // The URL that failed is never reused, whether or not a
+                // retry is left: a bad URL in the cache must not poison
+                // every later play of the song.
+                if let Some(entry) = self.current.clone() {
+                    self.url_cache.remove(&entry.uri);
+                    // One fresh resolve, then the failure stands.
+                    if self.retried_uri.as_deref() != Some(entry.uri.as_str()) {
+                        log::warn!("YouTube: playback failed ({detail}), resolving again");
+                        self.retried_uri = Some(entry.uri.clone());
+                        self.start(position, false);
+                        return;
+                    }
+                }
+                self.fail(&format!("Playback stopped: {detail}"));
+            }
+        }
+    }
+
+    /// Takes the in-process engine down with the app.
+    fn silence(&mut self) {
+        if let Some(native) = &self.native {
+            native.worker.send(AudioCommand::Shutdown);
         }
     }
 }
@@ -1358,6 +1688,15 @@ async fn resolve_yt_dlp(yt_dlp: &Path, query: &str) -> Result<yt_resolver::Resol
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_backend_escape_needs_the_exact_word_mpv() {
+        assert_eq!(backend_from(None), BackendChoice::Native);
+        assert_eq!(backend_from(Some("mpv")), BackendChoice::Mpv);
+        assert_eq!(backend_from(Some("MPV")), BackendChoice::Mpv);
+        assert_eq!(backend_from(Some("native")), BackendChoice::Native);
+        assert_eq!(backend_from(Some("")), BackendChoice::Native);
+    }
 
     #[test]
     fn an_entry_without_metadata_waits_for_it() {
