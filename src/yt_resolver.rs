@@ -28,10 +28,16 @@ pub(crate) struct Resolved {
     pub url: String,
     pub ttl: Duration,
     /// The format's own mime type when the player response named one.
-    #[expect(dead_code, reason = "the engine reads it when it loads a stream")]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine reads it when it loads a stream")
+    )]
     pub mime: Option<String>,
     /// The stream's byte length when known.
-    #[expect(dead_code, reason = "the engine reads it when it loads a stream")]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the engine reads it when it loads a stream")
+    )]
     pub content_length: Option<u64>,
     /// The next-best candidates, best first, for a stream this engine
     /// cannot open (each carries no fallbacks of its own).
