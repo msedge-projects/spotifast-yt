@@ -581,6 +581,8 @@ fn paint_track(app: &mut App, ui: &Ui, rect: Rect, p: f32, late: f32) {
 
 /// Restart, play, next, and the way home.
 fn paint_transport(app: &mut App, ui: &mut Ui, rect: Rect, p: f32, now: f64) {
+    #[cfg(test)]
+    eprintln!("island transport: p {p} now {now}");
     let palette = app.palette;
     let control = app.now_playing().is_some_and(|now| now.can_control);
     let playing = app.now_playing().is_some_and(|now| now.playing);
