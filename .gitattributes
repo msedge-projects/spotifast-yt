@@ -4,3 +4,5 @@
 # So must the Cast root certificates and the Cast test chain.
 assets/cast/** binary
 src/testdata/cast/** binary
+# And the audio fixtures, which are trimmed AAC and Opus streams.
+src/testdata/audio/** binary
