@@ -20,6 +20,13 @@ use symphonia::core::io::MediaSource;
 /// How long the connection setup may take before a request gives up.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// What the request names itself as. googlevideo serves a stalled, empty
+/// answer to ranged requests without one (verified against a fresh URL
+/// with curl: headers, then nothing), and reqwest sends no user agent by
+/// default; this is the identity yt-dlp uses, which googlevideo serves.
+const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) \
+     Chrome/124.0.0.0 Safari/537.36";
+
 /// Bytes discarded per read while absorbing a range-ignoring server.
 const SKIP_CHUNK: usize = 32 * 1024;
 
@@ -92,6 +99,12 @@ impl RangeSource {
     pub fn new(url: impl Into<String>, len: Option<u64>) -> io::Result<Self> {
         let client = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
+            .user_agent(USER_AGENT)
+            // The shape mpv streams with; googlevideo's HTTP/2 handling
+            // drops slow bodies where HTTP/1.1 streams steadily. (A body
+            // stall ceiling belongs to the engine's renewal work: the
+            // blocking builder has no read timeout.)
+            .http1_only()
             .build()
             .map_err(|error| link(LinkFailure::Transport, format!("HTTP client: {error}")))?;
         Ok(Self {
@@ -122,13 +135,19 @@ impl RangeSource {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Issues one request at `start` and keeps its body.
+    /// Issues one ranged request at `start` and keeps its body.
     fn request(&self, inner: &mut Inner, start: u64) -> io::Result<()> {
-        let mut request = self.client.get(&self.url);
-        if start > 0 {
-            request = request.header(RANGE, format!("bytes={start}-"));
-        }
-        let response = request
+        // Always a ranged read, even from the start: a plain GET is the
+        // shape googlevideo throttles and sometimes drops (the probe's
+        // curl matrix settled it), while a ranged read streams steadily.
+        // The matching `range` query parameter is what YouTube's own
+        // player sends, and the two must agree.
+        let separator = if self.url.contains('?') { '&' } else { '?' };
+        let url = format!("{}{}range={start}-", self.url, separator);
+        let response = self
+            .client
+            .get(&url)
+            .header(RANGE, format!("bytes={start}-"))
             .send()
             .map_err(|error| link(LinkFailure::Transport, format!("request failed: {error}")))?;
         let status = response.status();
@@ -390,6 +409,24 @@ mod tests {
         let mut collected = Vec::new();
         source.read_to_end(&mut collected).expect("read to end");
         assert_eq!(collected, bytes);
+    }
+
+    #[test]
+    fn even_the_first_read_asks_for_a_range() {
+        let bytes = payload();
+        let (url, seen) = serve(Stub::Honoring, bytes.clone());
+        let mut source = RangeSource::new(url, None).expect("source");
+        source.open().expect("open");
+        let mut byte = [0u8; 1];
+        source.read_exact(&mut byte).expect("read");
+        let asked = seen.lock().unwrap_or_else(PoisonError::into_inner);
+        assert!(
+            asked
+                .iter()
+                .flatten()
+                .any(|value| value.as_str() == "bytes=0-"),
+            "the first request must be ranged: {asked:?}"
+        );
     }
 
     #[test]
