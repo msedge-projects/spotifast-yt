@@ -100,16 +100,20 @@ pub struct Worker {
 }
 
 impl Worker {
-    /// Starts the thread over an already-built chain.
+    /// Starts the thread; the chain is built on it (a `Box<dyn Sink>` is
+    /// not `Send`, but the builder is).
     pub fn spawn(
-        sink: Box<dyn Sink>,
+        build_sink: impl FnOnce() -> Box<dyn Sink> + Send + 'static,
         control: Arc<AudioControl>,
         events: UnboundedSender<AudioEvent>,
     ) -> io::Result<Self> {
         let (commands, receiver) = std::sync::mpsc::channel();
         let join = thread::Builder::new()
             .name("yt-audio".to_string())
-            .spawn(move || run(sink, control, receiver, events))?;
+            .spawn(move || {
+                let sink = build_sink();
+                run(sink, control, receiver, events)
+            })?;
         Ok(Self {
             commands,
             join: Some(join),
@@ -452,7 +456,7 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::Mutex;
 
-    const AAC: &[u8] = include_bytes!("../../testdata/audio/aac.m4a");
+    const AAC: &[u8] = include_bytes!("../testdata/audio/aac.m4a");
 
     #[test]
     fn positions_add_what_played_since_the_snapshot() {
@@ -542,12 +546,20 @@ mod tests {
         let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel();
         let frames = Arc::new(Mutex::new(0u64));
         let packets = Arc::new(Mutex::new(0u64));
-        let sink = Box::new(FakeSink {
-            frames: Arc::clone(&frames),
-            packets: Arc::clone(&packets),
-        });
+        let sink_frames = Arc::clone(&frames);
+        let sink_packets = Arc::clone(&packets);
         let control = AudioControl::new(crate::sink::DEFAULT_BUFFER_MS);
-        let worker = Worker::spawn(sink, control, events_tx).expect("spawn the worker");
+        let worker = Worker::spawn(
+            move || {
+                Box::new(FakeSink {
+                    frames: sink_frames,
+                    packets: sink_packets,
+                })
+            },
+            control,
+            events_tx,
+        )
+        .expect("spawn the worker");
 
         let url = serve(AAC);
         worker.send(Command::Load {
@@ -602,12 +614,18 @@ mod tests {
     fn an_unreadable_stream_falls_through() {
         let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel();
         let frames = Arc::new(Mutex::new(0u64));
-        let sink = Box::new(FakeSink {
-            frames,
-            packets: Arc::new(Mutex::new(0u64)),
-        });
         let control = AudioControl::new(crate::sink::DEFAULT_BUFFER_MS);
-        let worker = Worker::spawn(sink, control, events_tx).expect("spawn the worker");
+        let worker = Worker::spawn(
+            move || {
+                Box::new(FakeSink {
+                    frames,
+                    packets: Arc::new(Mutex::new(0u64)),
+                })
+            },
+            control,
+            events_tx,
+        )
+        .expect("spawn the worker");
 
         // Garbage bytes, so the probe cannot identify a format.
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind a port");

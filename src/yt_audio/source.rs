@@ -278,7 +278,7 @@ fn content_length(headers: &HeaderMap) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read as _, Write as _};
+    use std::io::Write as _;
     use std::net::{TcpListener, TcpStream};
     use std::sync::Arc;
     use std::thread;

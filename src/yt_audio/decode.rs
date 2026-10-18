@@ -506,8 +506,8 @@ mod tests {
     use super::*;
     use std::io::{Read, Seek};
 
-    const AAC: &[u8] = include_bytes!("../../testdata/audio/aac.m4a");
-    const OPUS: &[u8] = include_bytes!("../../testdata/audio/opus.webm");
+    const AAC: &[u8] = include_bytes!("../testdata/audio/aac.m4a");
+    const OPUS: &[u8] = include_bytes!("../testdata/audio/opus.webm");
 
     /// An in-memory media source for the fixtures.
     struct Mem(io::Cursor<Vec<u8>>);
