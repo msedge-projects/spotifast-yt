@@ -1339,8 +1339,10 @@ impl Actor {
                     return;
                 }
                 self.track_started();
-                // The container's own duration covers songs whose cached
-                // metadata had none, the way mpv's duration property did.
+                // The container's own duration fills in only when the
+                // cached metadata had none: YouTube's fragmented streams
+                // state the length of their first segment, not the song's,
+                // and must not replace a known length with it.
                 let duration = opened
                     .duration_ms
                     .map(|ms| ms.min(u64::from(u32::MAX)) as u32)
@@ -1352,7 +1354,7 @@ impl Actor {
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
                         match state.track.as_mut() {
-                            Some(track) if track.duration_ms != duration => {
+                            Some(track) if track.duration_ms == 0 => {
                                 track.duration_ms = duration;
                                 true
                             }
