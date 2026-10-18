@@ -67,8 +67,12 @@ pub fn window_size(settings: &crate::settings::Settings, unit: f32) -> Vec2 {
 }
 
 /// A first guess at the window's size, before the display's scale is
-/// known; the first frame corrects it.
+/// known; the first frame corrects it. The glass player is in logical
+/// points already; the classic player scales its skin.
 pub fn initial_size(settings: &crate::settings::Settings) -> Vec2 {
+    if settings.skin.is_none() {
+        return super::glass::initial_size(settings);
+    }
     window_size(settings, WinampState::scale(settings, 1.0) as f32)
 }
 

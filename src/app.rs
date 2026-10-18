@@ -12020,7 +12020,13 @@ impl App {
             self.actions.push(Action::ToggleWinampWindow);
         }
         if self.settings.winamp_window {
-            crate::ui::winamp::show(self, ui);
+            // The house look while no custom skin is worn: the glass
+            // player. A worn skin keeps the classic player it dresses.
+            if self.settings.skin.is_none() {
+                crate::ui::glass::show(self, ui);
+            } else {
+                crate::ui::winamp::show(self, ui);
+            }
         } else {
             crate::ui::show(self, ui);
         }
