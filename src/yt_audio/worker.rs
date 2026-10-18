@@ -448,7 +448,8 @@ pub(crate) fn channel_balance(
     while frames < target {
         match stream.next_chunk() {
             Ok(Some(chunk)) => {
-                for frame in chunk.chunks_exact(2) {
+                let (frames_in_chunk, _) = chunk.as_chunks::<2>();
+                for frame in frames_in_chunk {
                     left += frame[0] * frame[0];
                     right += frame[1] * frame[1];
                 }
