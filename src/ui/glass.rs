@@ -65,7 +65,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let palette = app.palette;
     let now = app.now_playing();
     let window = ui.max_rect();
-    let rect = window.shrink(MARGIN);
+    let rect = panel_rect(window);
     paint_panel(ui, &palette, rect);
     drag_anywhere(ui, window);
     playing_row(app, ui, &palette, rect, now.as_ref());
@@ -96,6 +96,11 @@ fn fit_window(ctx: &egui::Context, settings: &crate::settings::Settings) {
     ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(wanted));
     ctx.send_viewport_cmd(ViewportCommand::MaxInnerSize(wanted));
     ctx.send_viewport_cmd(ViewportCommand::InnerSize(wanted));
+}
+
+/// The panel inside its window's margin.
+pub(crate) fn panel_rect(window: Rect) -> Rect {
+    window.shrink(MARGIN)
 }
 
 /// The panel's three rows: the artwork, the seek line, and the transport.
@@ -184,6 +189,24 @@ fn drag_anywhere(ui: &mut Ui, rect: Rect) {
     }
 }
 
+/// The close chip's rect inside the panel.
+pub(crate) fn close_rect(rect: Rect) -> Rect {
+    Rect::from_min_size(
+        pos2(rect.right() - PAD - 26.0, rect.top() + PAD + 6.0),
+        Vec2::splat(26.0),
+    )
+}
+
+/// The way-home button's rect, shown while nothing is playing.
+pub(crate) fn home_pill_rect(window: Rect) -> Rect {
+    let (_, _, transport) = rows(panel_rect(window));
+    home_pill(transport)
+}
+
+fn home_pill(transport: Rect) -> Rect {
+    Rect::from_center_size(transport.center(), vec2(216.0, 36.0))
+}
+
 /// The artwork, title, subtitle, the equalizer's chip, and the way back.
 fn playing_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rect, now: Option<&NowPlaying>) {
     let (art, _, _) = rows(rect);
@@ -206,10 +229,7 @@ fn playing_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rect,
         open_current(app, now);
     }
 
-    let close = Rect::from_min_size(
-        pos2(rect.right() - PAD - 26.0, rect.top() + PAD + 6.0),
-        Vec2::splat(26.0),
-    );
+    let close = close_rect(rect);
     let chip = Rect::from_min_size(
         pos2(close.left() - 8.0 - 34.0, rect.top() + PAD + 7.0),
         vec2(34.0, 24.0),
@@ -386,7 +406,7 @@ fn transport_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rec
     let (_, _, transport) = rows(rect);
     let Some(now) = now else {
         // The transport would be dead weight with nothing to control.
-        let pill = Rect::from_center_size(transport.center(), vec2(216.0, 36.0));
+        let pill = home_pill(transport);
         let response = glass_button(ui, pill, Id::new("glass-home"), palette);
         let expand = Rect::from_center_size(
             pos2(pill.left() + 30.0, pill.center().y),

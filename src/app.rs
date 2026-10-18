@@ -13612,6 +13612,95 @@ mod tests {
         }
     }
 
+    /// The glass player's way home works: with nothing playing, the one
+    /// button is "Open the main window", and a click on it leaves the
+    /// mini player.
+    #[test]
+    fn clicking_the_glass_players_way_home_leaves_the_mini_player() {
+        let ctx = egui::Context::default();
+        let mut app = test_app("glass-home-click");
+        app.attach(&ctx);
+        app.settings.winamp_window = true;
+        app.settings.skin = None;
+        let window = egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            crate::ui::glass::window_size(&app.settings),
+        );
+        let at = crate::ui::glass::home_pill_rect(window).center();
+        let mut draw = |app: &mut App, events: Vec<egui::Event>| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(window),
+                    time: Some(1.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.frame_ui(ui),
+            );
+        };
+        // Two still frames so the widgets are laid out before the click.
+        draw(&mut app, vec![]);
+        draw(&mut app, vec![]);
+        assert!(app.settings.winamp_window, "the mini player is the window");
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(&mut app, vec![egui::Event::PointerMoved(at)]);
+        draw(&mut app, vec![press(true)]);
+        draw(&mut app, vec![press(false)]);
+        assert!(
+            !app.settings.winamp_window,
+            "the button goes back to the main window"
+        );
+        app.backend.shutdown();
+    }
+
+    /// The close chip does the same with a song playing.
+    #[test]
+    fn the_glass_players_close_chip_leaves_the_mini_player() {
+        let ctx = egui::Context::default();
+        let mut app = test_app("glass-close-click");
+        app.attach(&ctx);
+        crate::demo::populate(&mut app);
+        app.settings.winamp_window = true;
+        app.settings.skin = None;
+        let window = egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            crate::ui::glass::window_size(&app.settings),
+        );
+        let at = crate::ui::glass::close_rect(crate::ui::glass::panel_rect(window)).center();
+        let mut draw = |app: &mut App, events: Vec<egui::Event>| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(window),
+                    time: Some(1.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.frame_ui(ui),
+            );
+        };
+        draw(&mut app, vec![]);
+        draw(&mut app, vec![]);
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        draw(&mut app, vec![egui::Event::PointerMoved(at)]);
+        draw(&mut app, vec![press(true)]);
+        draw(&mut app, vec![press(false)]);
+        assert!(
+            !app.settings.winamp_window,
+            "the close chip goes back to the main window"
+        );
+        app.backend.shutdown();
+    }
+
     #[test]
     fn autoscroll_updates_the_real_lyrics_and_skinned_playlist_without_changing_playback() {
         for (skinned, chosen) in [(false, false), (true, false), (false, true), (true, true)] {
