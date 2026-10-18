@@ -717,6 +717,8 @@ pub(crate) fn run() -> eframe::Result<()> {
                     window_hwnd,
                     #[cfg(windows)]
                     caption_tint: None,
+                    #[cfg(windows)]
+                    mica: None,
                     #[cfg(feature = "demo")]
                     shot: creator_shot.clone(),
                     #[cfg(feature = "demo")]
@@ -783,6 +785,11 @@ const fn main_window_decorated(custom_titlebar: bool) -> bool {
 }
 
 /// The DWM caption colour for a tint: 0x00BBGGRR as Win32 wants it.
+/// DWMWA_COLOR_DEFAULT: the system's own title bar colouring, which is
+/// what lets the Mica material show through.
+#[cfg(windows)]
+const CAPTION_DEFAULT: u32 = 0xFFFF_FFFF;
+
 #[cfg(windows)]
 fn caption_colorref(tint: egui::Color32) -> u32 {
     let [r, g, b, _] = tint.to_array();
@@ -1263,6 +1270,10 @@ struct Shell {
     /// does.
     #[cfg(windows)]
     caption_tint: Option<u32>,
+    /// Whether the title strip wears the Mica material; None until the
+    /// first frame has asked. Some(false) keeps the caption tint.
+    #[cfg(windows)]
+    mica: Option<bool>,
     #[cfg(windows)]
     thumbbar: musify::thumbbar::ThumbBar,
     /// A pending `--demo-shot` capture, if this is a screenshot run.
@@ -1327,11 +1338,23 @@ impl Shell {
         }
         #[cfg(windows)]
         if self.window_hwnd != 0 {
-            let tint = musify::ui::caption_tint(app);
-            let colorref = caption_colorref(tint);
-            if self.caption_tint != Some(colorref) {
-                musify::window::set_caption_color(self.window_hwnd, colorref);
-                self.caption_tint = Some(colorref);
+            // The title strip wears the Mica material where Windows 11 can
+            // give it: the strip reads as glass and the app's own tint is
+            // left off so it shows. Older Windows keeps the tint.
+            if self.mica.is_none() {
+                let mica = musify::window::set_backdrop_mica(self.window_hwnd);
+                if mica {
+                    musify::window::set_caption_color(self.window_hwnd, CAPTION_DEFAULT);
+                }
+                self.mica = Some(mica);
+            }
+            if self.mica == Some(false) {
+                let tint = musify::ui::caption_tint(app);
+                let colorref = caption_colorref(tint);
+                if self.caption_tint != Some(colorref) {
+                    musify::window::set_caption_color(self.window_hwnd, colorref);
+                    self.caption_tint = Some(colorref);
+                }
             }
         }
         #[cfg(target_os = "macos")]

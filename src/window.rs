@@ -28,6 +28,34 @@ pub fn set_caption_color(hwnd: isize, color: u32) {
     }
 }
 
+/// Asks DWM for the Mica material behind the title strip (Windows 11 22H2
+/// and later), so the chrome reads as glass instead of a painted band.
+/// Returns whether the system took it; older Windows says no, and the
+/// caption tint stands in.
+#[cfg(windows)]
+pub fn set_backdrop_mica(hwnd: isize) -> bool {
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: *mut core::ffi::c_void,
+            attribute: u32,
+            value: *const core::ffi::c_void,
+            size: u32,
+        ) -> i32;
+    }
+    const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
+    const DWMSBT_MAINWINDOW: i32 = 2;
+    let value = DWMSBT_MAINWINDOW;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd as *mut core::ffi::c_void,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            (&value as *const i32).cast(),
+            core::mem::size_of::<i32>() as u32,
+        ) >= 0
+    }
+}
+
 /// Why a Wayland window cannot be kept above others from the app, and what
 /// to do instead.
 pub fn on_top_unavailable(locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
