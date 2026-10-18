@@ -3263,7 +3263,17 @@ pub fn search_suggestions(
     let ctx = ui.ctx().clone();
     let screen_height =
         ctx.input(|input| input.raw.screen_rect.map_or(720.0, |rect| rect.height()));
-    let max_height = (screen_height * 0.55).clamp(200.0, 560.0);
+    let max_height = (screen_height * 0.62).clamp(240.0, 640.0);
+    // The panel takes the height its rows need, up to the cap, on the
+    // frame they arrive: the ScrollArea alone can be held to the room it
+    // first saw, which kept the panel a row or two tall as answers
+    // streamed in.
+    let content_height: f32 = rows
+        .iter()
+        .map(|row| if row.media() { 58.0 } else { 36.0 })
+        .sum::<f32>()
+        + 12.0;
+    let height = content_height.min(max_height);
     let fill = if palette.dark {
         Color32::from_rgba_unmultiplied(40, 44, 48, 180)
     } else {
@@ -3305,6 +3315,7 @@ pub fn search_suggestions(
                 .inner_margin(Margin::symmetric(0, 6))
                 .show(ui, |ui| {
                     ui.set_min_width(width);
+                    ui.set_height(height);
                     ScrollArea::vertical()
                         .max_height(max_height)
                         .show(ui, |ui| {
