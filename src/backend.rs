@@ -723,6 +723,14 @@ pub enum Command {
     DurationsBackfilled {
         found: Vec<(String, u64)>,
     },
+    /// The interface asked for the audio probe: play one query through the
+    /// in-process engine and log the facts.
+    ProbeAudio {
+        query: String,
+        seek_ms: Option<u64>,
+    },
+    /// Internal: the audio probe finished; bring the engine back.
+    ProbeDone,
     /// Internal: a YouTube search in YouTube mode finished: its rows and
     /// the answer for the Search or PlaySearch request that asked.
     YtSearchDone {
@@ -2694,6 +2702,12 @@ impl Worker {
                     self.finish_spotify_import(liked, playlists);
                 }
                 Command::BackfillDurations { ids } => self.start_duration_backfill(ids),
+                Command::ProbeAudio { query, seek_ms } => self.start_audio_probe(query, seek_ms),
+                Command::ProbeDone => {
+                    if self.premium == Some(false) && self.yt.is_none() {
+                        self.start_yt_engine();
+                    }
+                }
                 Command::DurationsBackfilled { found } => {
                     log::info!("Lengths: {} filled", found.len());
                     self.emit(Event::DurationsBackfilled { found });
@@ -4126,6 +4140,174 @@ impl Worker {
             let _ = commands.send(message);
             waker.wake();
         });
+    }
+
+    /// Plays one query through the in-process engine, for the hidden
+    /// `probe-audio` verb: the running engine stops for the duration (so
+    /// two sounds never overlap) and comes back when the probe is done.
+    fn start_audio_probe(&mut self, query: String, seek_ms: Option<u64>) {
+        let restart = match self.yt.take() {
+            Some(engine) => {
+                engine.shutdown();
+                true
+            }
+            None => false,
+        };
+        let config = self.engine_config.clone();
+        let commands = self.commands.clone();
+        let waker = self.waker.clone();
+        tokio::spawn(async move {
+            match Self::probe_stream(&query, seek_ms, &config).await {
+                Ok(()) => log::info!("Probe: done"),
+                Err(error) => log::error!("Probe: failed: {error:#}"),
+            }
+            if restart {
+                let _ = commands.send(Command::ProbeDone);
+                waker.wake();
+            }
+        });
+    }
+
+    /// Plays one query through the in-process engine and logs the facts.
+    async fn probe_stream(
+        query: &str,
+        seek_ms: Option<u64>,
+        config: &crate::player::EngineConfig,
+    ) -> anyhow::Result<()> {
+        use crate::yt_audio::worker::{AudioEvent, Command as YtAudioCommand, Worker};
+
+        let yt_dlp = crate::player_yt::find_tool("yt-dlp")
+            .ok_or_else(|| anyhow::anyhow!("the probe needs yt-dlp for its fallback resolve"))?;
+        let native = crate::yt_resolver::NativeResolver::new()?;
+        let resolved = crate::player_yt::resolve(&native, &yt_dlp, "", query).await?;
+        log::info!(
+            "Probe: resolved {query:?} (mime {:?}, {} bytes)",
+            resolved.mime,
+            resolved
+                .content_length
+                .map(|length| length.to_string())
+                .unwrap_or_else(|| "an unknown".to_string())
+        );
+
+        let control = crate::sink::AudioControl::new(config.buffer_ms);
+        let volume = crate::sink::SharedVolume::new(config.initial_volume);
+        let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+        let device = config.audio_device.clone();
+        let buffer_ms = config.buffer_ms;
+        let tap = Arc::clone(&config.tap);
+        let eq = Arc::clone(&config.eq);
+        let chain_control = Arc::clone(&control);
+        let chain_volume = volume.clone();
+        let normalisation = Arc::new(std::sync::atomic::AtomicU64::new(1.0f64.to_bits()));
+        let on_error: crate::sink::ErrorHook =
+            Arc::new(|message| log::error!("Probe: audio output: {message}"));
+        let worker = Worker::spawn(
+            move || {
+                crate::sink::build_chain(crate::sink::ChainConfig {
+                    device,
+                    buffer_ms,
+                    control: chain_control,
+                    on_error,
+                    tap,
+                    eq,
+                    volume: chain_volume.getter(),
+                    ceiling: chain_volume.getter(),
+                    normalisation,
+                })
+            },
+            control,
+            events_tx,
+        )?;
+        worker.send(YtAudioCommand::Load {
+            url: resolved.url.clone(),
+            length: resolved.content_length,
+            hint: resolved.mime.clone(),
+            position_ms: 0,
+            seq: 1,
+            fade_out: true,
+        });
+
+        let mut opened = None;
+        let mut last_ms = 0u64;
+        let mut line_ms = 0u64;
+        let mut seek_sent = None;
+        let mut seek_landed = false;
+        loop {
+            let event = match tokio::time::timeout(
+                std::time::Duration::from_secs(120),
+                events.recv(),
+            )
+            .await
+            {
+                Ok(Some(event)) => event,
+                Ok(None) => return Err(anyhow::anyhow!("the probe worker went away")),
+                Err(_) => {
+                    return Err(anyhow::anyhow!("the probe heard nothing for two minutes"));
+                }
+            };
+            match event {
+                AudioEvent::Opened {
+                    opened: facts,
+                    first_audio_ms,
+                    ..
+                } => {
+                    log::info!(
+                        "Probe: {} in {} at {} Hz{}; first audio in {} ms",
+                        facts.codec,
+                        facts.container,
+                        facts.rate,
+                        if facts.resampled { ", resampled" } else { "" },
+                        first_audio_ms
+                    );
+                    opened = Some(facts);
+                }
+                AudioEvent::Positioned { position_ms, .. } => {
+                    last_ms = position_ms;
+                    if position_ms >= line_ms + 5_000 {
+                        line_ms = position_ms / 5_000 * 5_000;
+                        log::info!("Probe: at {position_ms} ms");
+                    }
+                    if let Some(target) = seek_ms {
+                        if seek_sent.is_none() && position_ms >= 5_000 {
+                            log::info!("Probe: seeking to {target} ms");
+                            worker.send(YtAudioCommand::Seek {
+                                position_ms: target,
+                                seq: 1,
+                            });
+                            seek_sent = Some(std::time::Instant::now());
+                        } else if let Some(at) = seek_sent
+                            && !seek_landed
+                            && position_ms >= target
+                        {
+                            seek_landed = true;
+                            log::info!(
+                                "Probe: seek landed at {position_ms} ms after {} ms",
+                                at.elapsed().as_millis()
+                            );
+                        }
+                    }
+                }
+                AudioEvent::Ended { .. } => {
+                    let lasting = opened
+                        .and_then(|facts: crate::yt_audio::decode::Opened| facts.duration_ms)
+                        .map(|ms| format!(" of {ms} ms"))
+                        .unwrap_or_default();
+                    log::info!("Probe: ended at {last_ms} ms{lasting}");
+                    break;
+                }
+                AudioEvent::Failed {
+                    failure,
+                    position_ms,
+                    ..
+                } => {
+                    return Err(anyhow::anyhow!(
+                        "the stream failed at {position_ms} ms: {failure:?}"
+                    ));
+                }
+            }
+        }
+        worker.shutdown();
+        Ok(())
     }
 
     fn yt_notify(&self) -> crate::player::Notify {

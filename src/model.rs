@@ -1231,6 +1231,12 @@ pub enum Action {
     ImportSpotify,
     /// Fill the lengths the app's own library is missing.
     BackfillDurations,
+    /// Play one query through the in-process playback engine and report
+    /// the facts.
+    ProbeAudio {
+        query: String,
+        seek_ms: Option<u64>,
+    },
     SetLibraryByYou(bool),
     SetLibrarySort {
         shelf: crate::settings::LibraryShelf,

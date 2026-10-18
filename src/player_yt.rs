@@ -1142,7 +1142,7 @@ fn volume_percent(volume: u16) -> f64 {
 
 /// The named program on PATH, then the places Windows installs commonly
 /// put it (pip's per-user Scripts folder, the portable mpv).
-fn find_tool(name: &str) -> Option<PathBuf> {
+pub(crate) fn find_tool(name: &str) -> Option<PathBuf> {
     let exe = if cfg!(windows) {
         format!("{name}.exe")
     } else {
@@ -1279,7 +1279,7 @@ fn hide_console(_command: &mut tokio::process::Command) {}
 /// directly, so the search round trip is skipped for it. The native path
 /// is the quiet default; the fallback is loud in the log so a client
 /// rotation is noticed.
-async fn resolve(
+pub(crate) async fn resolve(
     native: &yt_resolver::NativeResolver,
     yt_dlp: &Path,
     uri: &str,

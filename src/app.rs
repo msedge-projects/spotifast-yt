@@ -3956,6 +3956,9 @@ impl App {
                 ControlCommand::ReloadThemes => Some(Action::ReloadThemes),
                 ControlCommand::ImportSpotify => Some(Action::ImportSpotify),
                 ControlCommand::BackfillDurations => Some(Action::BackfillDurations),
+                ControlCommand::ProbeAudio { query, seek_ms } => {
+                    Some(Action::ProbeAudio { query, seek_ms })
+                }
                 ControlCommand::PlayPause => Some(Action::TogglePlay),
                 ControlCommand::Play => (!playing).then_some(Action::TogglePlay),
                 ControlCommand::Pause => playing.then_some(Action::TogglePlay),
@@ -10429,6 +10432,13 @@ impl App {
                     .replace("{songs}", &ids.len().to_string()),
                 );
                 self.backend.send(Command::BackfillDurations { ids });
+            }
+            Action::ProbeAudio { query, seek_ms } => {
+                self.toast(gettext(
+                    self.locale,
+                    "Probing through the in-process player; watch the log",
+                ));
+                self.backend.send(Command::ProbeAudio { query, seek_ms });
             }
             Action::InsertInPlaylist {
                 playlist_id,

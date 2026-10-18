@@ -168,6 +168,15 @@ enum Control {
     /// Fill the lengths the app's own library is missing, one paced player
     /// request per song.
     BackfillDurations,
+    /// Play a song through the in-process playback engine and log what
+    /// happens; a leading `seek=SECONDS` adds a seek test after five
+    /// seconds. A maintenance probe, not a user-facing verb.
+    ProbeAudio {
+        /// `seek=SECONDS` first when testing seeking, then the words to
+        /// search for.
+        #[arg(required = true, num_args = 1..)]
+        target: Vec<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -248,6 +257,7 @@ fn run_control(control: Control) -> i32 {
         Control::ReloadThemes => "reload-themes".to_owned(),
         Control::ImportSpotify => "import-spotify".to_owned(),
         Control::BackfillDurations => "backfill-durations".to_owned(),
+        Control::ProbeAudio { target } => format!("probe-audio {}", target.join(" ")),
     };
     let printed = match single_instance::send(&verb) {
         Ok(single_instance::Reply::Ok) => return 0,

@@ -94,6 +94,13 @@ pub enum ControlCommand {
     /// Fill the lengths the app's own library is missing, one paced player
     /// request per song.
     BackfillDurations,
+    /// Play one query through the in-process playback engine and report
+    /// the facts. A maintenance probe.
+    ProbeAudio {
+        query: String,
+        /// A seek to run after five seconds of playback.
+        seek_ms: Option<u64>,
+    },
 }
 
 /// Marks this process as the running instance until dropped.
@@ -297,6 +304,22 @@ fn parse(line: &str) -> Option<Request> {
         ("reload-themes", None) => ControlCommand::ReloadThemes,
         ("import-spotify", None) => ControlCommand::ImportSpotify,
         ("backfill-durations", None) => ControlCommand::BackfillDurations,
+        ("probe-audio", Some(argument)) => {
+            let (seek_ms, query) = match argument.trim().strip_prefix("seek=") {
+                Some(rest) => {
+                    let (seconds, words) = rest.split_once(' ')?;
+                    (
+                        Some(seconds.parse::<u64>().ok()?.saturating_mul(1000)),
+                        words,
+                    )
+                }
+                None => (None, argument),
+            };
+            ControlCommand::ProbeAudio {
+                query: search_text(query)?,
+                seek_ms,
+            }
+        }
         ("playpause", None) => ControlCommand::PlayPause,
         ("play", None) => ControlCommand::Play,
         ("pause", None) => ControlCommand::Pause,
@@ -382,6 +405,26 @@ mod tests {
             Some(Request::Command(command)) => Some(command),
             _ => None,
         }
+    }
+
+    #[test]
+    fn parses_the_probe_verb_with_and_without_a_seek() {
+        assert_eq!(
+            command("probe-audio danza rota"),
+            Some(ControlCommand::ProbeAudio {
+                query: "danza rota".to_string(),
+                seek_ms: None,
+            })
+        );
+        assert_eq!(
+            command("probe-audio seek=30 danza rota"),
+            Some(ControlCommand::ProbeAudio {
+                query: "danza rota".to_string(),
+                seek_ms: Some(30_000),
+            })
+        );
+        assert_eq!(command("probe-audio seek=30"), None, "a seek without words");
+        assert_eq!(command("probe-audio"), None, "no words at all");
     }
 
     #[test]
