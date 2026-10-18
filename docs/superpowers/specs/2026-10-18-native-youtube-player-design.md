@@ -15,12 +15,27 @@ YouTube mode:
 3. **Visualizers and EQ join in.** YouTube audio flows through the app's own
    audio chain (equalizer, visualizer tap, limiter, device handling), exactly
    as Spotify audio does.
-4. **Lighter.** No second process; decode runs on one thread. Measured CPU,
-   memory, and start latency must beat mpv.
+4. **Lighter by multiples.** No mpv process exists at idle or while playing;
+   the engine thread parks when paused. Targets, measured with the same
+   harness on both engines: idle and paused cost improves several-fold (three
+   or more; mpv's resident process is gone), first sound on a cold engine is
+   faster by the spawn and handshake savings (once warm, no worse than mpv),
+   and playback CPU measures at or below mpv's.
+5. **Maximum quality.** Always the best stream YouTube offers for the song
+   (Opus around 160 kbps ahead of AAC 128 kbps; a 256 kbps m4a leads if
+   ever served), decoded directly with no lossy re-encode. Rate conversion
+   uses only the existing stateful polyphase-sinc resamplers: one at decode
+   when the source is not 44.1 kHz (Opus always), plus the output-stage one
+   the chain already applies for the device's own rate. EQ and limiter
+   behavior stay exactly as Spotify mode's.
+6. **No audio work when silent.** Paused or idle: the decode thread parked,
+   the device parked, measured audio CPU at the measurement floor (zero
+   within timer resolution).
 
 Parity rule (the user's bar): whatever YouTube actually serves for audio must
-play. In practice that is AAC in fragmented MP4, Opus in WebM, and the rare
-legacy Vorbis in WebM, plus seeking and stall recovery.
+play, and at the best quality it serves it. In practice that is Opus in WebM
+and AAC in fragmented MP4, plus the rare legacy Vorbis in WebM, with seeking
+and stall recovery.
 
 ## 2. Non-goals
 
@@ -163,11 +178,12 @@ whole path before anything switches over.
   while demuxing; `prebuild_seek_index` stays off (it would scan the whole
   remote file at open).
 - Decoder dispatch on the track's codec:
-  - **AAC** (the common case, itag 140) and **Vorbis** (legacy): symphonia's
-    own decoders (`symphonia::default::get_codecs().make(...)`).
-  - **Opus** (itag 251, WebM): symphonia demuxes, and packets are decoded
-    with a pure-Rust Opus decoder at 48 kHz stereo. This is the only place
-    symphonia has no decoder of its own.
+  - **AAC** (itag 140) and **Vorbis** (legacy): symphonia's own decoders
+    (`symphonia::default::get_codecs().make(...)`).
+  - **Opus** (itag 251, WebM; the usual pick under the maximum-quality
+    ranking): symphonia demuxes, and packets are decoded with a pure-Rust
+    Opus decoder at 48 kHz stereo. This is the only place symphonia has no
+    decoder of its own.
 - Output normalization before packetizing:
   - mono to stereo (the chain's frame accounting expects two channels),
   - any non-44.1 kHz rate through the existing stateful resampler
@@ -184,6 +200,13 @@ whole path before anything switches over.
 - A single bad packet is discarded and logged (symphonia's own guidance);
   about ten consecutive failures demote to a stream failure, which the
   worker reports for renewal or failure.
+- Quality and cost discipline: no lossy re-encode and no hidden processing;
+  the only PCM steps are mono to stereo duplication, rate conversion
+  through the existing stateful polyphase-sinc resampler when the source is
+  not 44.1 kHz, then EQ and limiter exactly as Spotify mode. Decode buffers
+  are reused across packets rather than reallocated per frame (the Opus
+  decoder is allocation-free per frame after warm-up); nothing is fetched
+  ahead beyond the sink's bounded queue, so memory stays flat.
 
 ### 4.4 `yt_audio::worker`: the thread that owns playback
 
@@ -284,10 +307,21 @@ whole path before anything switches over.
   `contentLength`. The yt-dlp fallback derives mime from the URL's own
   `mime=` query parameter and leaves length unknown.
 - The engine's own `CachedStream` (`player_yt.rs:298-302`) carries the same
-  two facts next to the URL, so cache hits and prefetches still give the
-  worker its format hint; a missing hint falls back to the URL's `mime=`
-  parameter.
-- Format preference and selection stay exactly as they are.
+  facts (mime, length, ranked fallbacks) next to the URL, so cache hits and
+  prefetches still give the worker its hint and its fallback chain; a
+  missing hint falls back to the URL's `mime=` parameter.
+- Format preference changes from `[140, 251, 139]` to maximum quality:
+  every audio format the engine can decode (AAC-LC, Opus, Vorbis, by
+  mimeType) is scored by effective bitrate and the highest wins. Known
+  tiers: `141` 256 kbps AAC-LC, `251` about 160 kbps Opus, `140` 128 kbps
+  AAC-LC, `250` 70 kbps, `249` 50 kbps, and `139` (48 kbps HE-AAC) ranking
+  last because at most a base LC core can decode. Unknown decodable formats
+  score by their `bitrate` field, derived from `contentLength * 8 /
+  duration` when the field is absent.
+- The top candidates travel with the resolve (a short ranked list, capped at
+  three), and a format that fails to open or decode falls through to the
+  next candidate before anything user-visible happens (section 6). The
+  yt-dlp fallback's selector becomes `bestaudio/best` for the same reason.
 
 ### 4.8 The probe command
 
@@ -355,8 +389,10 @@ hidden maintenance verb, not a user feature.
   position), at most twice per track, then fail.
 - Single bad packets: discarded and logged; ten in a row counts as a stream
   failure.
-- Unsupported codec (unreachable for today's YouTube formats): fail with a
-  message that names the format.
+- A format that fails to open or decode (for example, if the LC-only
+  decoder rejects an HE-AAC stream) falls through to the next ranked
+  candidate from the resolve; only when every candidate is exhausted does
+  the existing failure surface run, naming the format.
 - Worker panic: the existing disconnected/reconnect path.
 - Device failures: unchanged, already routed through the sink's error hook.
 
@@ -380,8 +416,14 @@ hidden maintenance verb, not a user feature.
 - Manual acceptance via the probe: several songs, one seek run; then
   skipping, pausing, volume, and a normal listening session on the new
   engine.
-- Resources: the same harness used before (idle and playing CPU/GPU,
-  memory, first-sound latency) run against both backends and reported.
+- Resources: the same harness used before, with identical methodology on
+  both engines, reported as a comparison table and held against section 1's
+  targets: app idle with nothing playing, paused, and playing; total RSS
+  (with mpv's own process counted separately while it exists; several-fold
+  improvement expected where mpv would be resident); paused CPU at the
+  measurement floor; playback CPU at or below mpv's; first sound measured
+  cold (first song after app start) and warm (subsequent songs). The
+  numbers are part of the acceptance verdict.
 
 ## 8. Rollout stages
 
@@ -405,8 +447,9 @@ hidden maintenance verb, not a user feature.
 | Symphonia's fragmented-MP4 seeking walks fragments and keeps parsed moofs in memory (upstream #586); seek speed unknown | Measure with the probe's seek test. Escape hatch, only if needed: a composite source (cached init segment + `Range` splice + moof resync, the ffmpeg trick) documented but not built. Streams are only a few MB. |
 | WebM seeking without Cues relies on the index build during demux | Accuracy is guaranteed by decode-skip regardless; only speed is at stake. Measured by the probe. `prebuild_seek_index` stays off to avoid a full remote scan at open. |
 | Opus pre-skip / CodecDelay handling | Fixture duration test in CI; discard logic uses demuxer timestamps; RFC 7845 pre-roll on seek. |
-| HE-AAC (itag 139/141) plays its AAC-LC base layer only | Rare: 140 and 251 outrank it; documented, not worked around. |
+| HE-AAC (itag 139) may not open in the LC-only decoder | It ranks last, and the candidate fallback chain moves to the next format automatically; a song serving only 139 is a documented gap (mpv, on ffmpeg, would play it). |
 | `rusty-opus` is young | Exact version pin; real-stream probe; swap path to `opus-decoder` or C libopus documented in `Cargo.toml`. |
+| Opus-first default raises the stakes on the young Opus decoder, the WebM demuxer, and the 48k to 44.1k resample | Both decode paths exist and are fixture-tested either way; the probe exercises Opus explicitly; flipping back to AAC-first is a one-line change if the ears say so. |
 | googlevideo throttling | Bitrate needs are tiny; open-ended ranges; chunked ranges with matching `&range=` parameter only if a stall is ever seen. |
 | `flake.nix` vendor hash after the lockfile change | Expected one extra CI round; read the hash from the failing nix job and commit it. |
 | Position accuracy vs mpv | Counter-based position with fixture-tested math; the user's ear is the final check. |
@@ -419,6 +462,9 @@ hidden maintenance verb, not a user feature.
 - symphonia 0.5.5: confirm how the mkv demuxer exposes CodecDelay and
   whether fMP4 seeks re-read the file header (the probe answers this
   empirically).
+- Whether the AAC decoder opens an HE-AAC (itag 139) stream at all; if it
+  errors, the candidate fallback chain covers normal songs and the gap is
+  only songs that serve 139 alone.
 - Where the app's shared `AudioTap`/`SharedEq` and audio settings reach
   `start_yt_engine` today, so the chain constructor is wired with the same
   instances (`app.rs:826-827, 12828-12845`; `backend.rs:8556`).
