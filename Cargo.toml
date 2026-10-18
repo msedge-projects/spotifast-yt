@@ -138,6 +138,17 @@ protobuf = "3"
 # build aborts on panic, so it is left out. rodio supplies the mixer and the
 # queue only; fastframe-audio below owns the device stream.
 rodio = { version = "0.21", default-features = false }
+# Unwrapping and decoding YouTube audio: AAC in fragmented MP4 and Vorbis
+# in WebM, plus the WebM demuxer that carries Opus. The version has to
+# track librespot's symphonia (0.5.5) so one symphonia-core serves both,
+# and mkv and vorbis are named here because librespot's dependency leaves
+# them off.
+symphonia = { version = "0.5.5", default-features = false, features = ["aac", "isomp4", "mkv", "vorbis"] }
+# Opus decoding for YouTube's ~160 kbps WebM audio: pure Rust, zero
+# dependencies, no C toolchain. Pinned exactly because the crate is young;
+# if it disappoints the ears, `opus-decoder` and then the C libopus
+# bindings are one-line swaps.
+rusty-opus = "=1.0.2"
 # `socks` is SOCKS5 proxy support for the Web API, artwork, lyrics, and
 # update checks. HTTP proxies work without it. `system-proxy` reads the OS
 # proxy on macOS and Windows when the mode is System; Linux uses environment

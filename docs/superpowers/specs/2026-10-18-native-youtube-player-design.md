@@ -357,8 +357,9 @@ hidden maintenance verb, not a user feature.
   must stay 0.5.x to share `symphonia-core` with librespot's copy. Default
   features keep mkv and vorbis available. Commented in `Cargo.toml` as the
   YouTube unwrap/decode path.
-- `rusty-opus = "=1.0.1"`: pure-Rust Opus decoder, zero dependencies,
-  BSD-3-Clause, pinned exactly. Fallbacks if it disappoints, in order:
+- `rusty-opus = "=1.0.2"`: pure-Rust Opus decoder, zero dependencies,
+  BSD-3-Clause, pinned exactly (the research above saw 1.0.1; the lock
+  resolved the newer 1.0.2 patch). Fallbacks if it disappoints, in order:
   `opus-decoder` (pure Rust) or the C libopus bindings (adds CMake; last
   resort). The probe validates it against real streams; the fixture test
   validates it in CI.

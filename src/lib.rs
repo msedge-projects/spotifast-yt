@@ -60,5 +60,6 @@ pub mod util;
 pub mod vis;
 pub mod winamp;
 pub mod window;
+pub mod yt_audio;
 pub mod yt_resolver;
 pub mod zeroconf;

@@ -42,7 +42,7 @@ songs plus a seek probe and says the sound is right.
     `symphonia-core` with librespot's copy; `mkv` and `vorbis` are declared
     explicitly because librespot's dependency does not enable them (today's
     lockfile has no `symphonia-format-mkv`).
-  - `rusty-opus = "=1.0.1"` with a comment naming the swap path
+  - `rusty-opus = "=1.0.2"` with a comment naming the swap path
     (`opus-decoder`, then C libopus as last resort).
 - `src/yt_audio/mod.rs` with module documentation and empty submodules;
   `pub mod yt_audio;` in `src/lib.rs`.
