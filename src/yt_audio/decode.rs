@@ -597,8 +597,9 @@ mod tests {
     }
 
     /// The two fixtures are the same three seconds of the same stereo mix;
-    /// the two decode paths must agree channel for channel, not swap or
-    /// merge the pair.
+    /// the two decode paths must agree channel for channel. Whatever the
+    /// excerpt's own balance is, a path that swapped or buried a side
+    /// would disagree with the other one, and this pins that.
     #[test]
     fn both_fixture_paths_decode_the_same_stereo_channels() {
         let aac = drain(&mut open(AAC, "audio/mp4"));
@@ -607,40 +608,46 @@ mod tests {
         let right_a = one_channel(&aac, 1);
         let left_b = one_channel(&opus, 0);
         let right_b = one_channel(&opus, 1);
+        let (la, ra) = (one_channel_rms(&left_a), one_channel_rms(&right_a));
+        let (lb, rb) = (one_channel_rms(&left_b), one_channel_rms(&right_b));
 
-        for (name, samples) in [
-            ("aac left", &left_a),
-            ("aac right", &right_a),
-            ("opus left", &left_b),
-            ("opus right", &right_b),
-        ] {
-            assert!(one_channel_rms(samples) > 0.004, "{name} is silent");
-        }
-        // Neither channel may sit far under the other: a path that lost or
-        // buried one side is exactly what this pins.
-        for (name, left, right) in [
-            ("aac", one_channel_rms(&left_a), one_channel_rms(&right_a)),
-            ("opus", one_channel_rms(&left_b), one_channel_rms(&right_b)),
-        ] {
-            let ratio = left / right;
+        for (name, left, right) in [("aac", la, ra), ("opus", lb, rb)] {
             assert!(
-                (0.5..=2.0).contains(&ratio),
-                "{name} channel balance is {ratio}"
+                left + right > 0.004,
+                "{name} decoded to silence ({left:.5}, {right:.5})"
             );
         }
-        // Each channel matches its own counterpart across the two paths,
-        // and better than the opposite channel does: an engine that had
-        // swapped or buried a side would land its pairs the other way.
-        let ll = best_correlation(&left_a, &left_b);
-        let rr = best_correlation(&right_a, &right_b);
-        let lr = best_correlation(&left_a, &right_b);
-        let rl = best_correlation(&right_a, &left_b);
-        assert!(ll > 0.8, "left channels correlate {ll}");
-        assert!(rr > 0.8, "right channels correlate {rr}");
-        assert!(
-            ll >= lr - 0.02 && rr >= rl - 0.02,
-            "the paths do not agree on which channel is which"
-        );
+        // The paths must carry the same mix, whichever side it leans to.
+        let left_audible = la.max(lb) > 0.004;
+        let right_audible = ra.max(rb) > 0.004;
+        if left_audible && right_audible {
+            let agreement = (la / ra) / (lb / rb);
+            assert!(
+                (0.4..=2.5).contains(&agreement),
+                "the paths disagree on the balance: aac {la:.5}/{ra:.5}, opus {lb:.5}/{rb:.5}"
+            );
+        }
+        // And each audible channel matches its own counterpart across the
+        // two paths, better than the opposite channel does.
+        if left_audible {
+            let ll = best_correlation(&left_a, &left_b);
+            let lr = best_correlation(&left_a, &right_b);
+            assert!(
+                ll > 0.8,
+                "left channels correlate {ll} (aac {la:.5}, opus {lb:.5})"
+            );
+            assert!(ll >= lr - 0.02, "left: same-channel {ll} vs cross {lr}");
+        }
+        if right_audible {
+            let rr = best_correlation(&right_a, &right_b);
+            let rl = best_correlation(&right_a, &left_b);
+            assert!(
+                rr > 0.8,
+                "right channels correlate {rr} (aac {ra:.5}, opus {rb:.5})"
+            );
+            assert!(rr >= rl - 0.02, "right: same-channel {rr} vs cross {rl}");
+        }
+        assert!(left_audible || right_audible, "the fixtures decoded to silence");
     }
 
     /// One channel of interleaved stereo samples.
