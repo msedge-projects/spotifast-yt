@@ -3365,8 +3365,7 @@ fn suggestion_row(
             .rect_filled(rect, CornerRadius::same(6), hover_fill);
     }
     let (title, subtitle) = row.label(locale);
-    let text_left;
-    if row.media() {
+    let text_left = if row.media() {
         let art = match row {
             Suggestion::Song { art, .. }
             | Suggestion::Artist { art, .. }
@@ -3379,7 +3378,7 @@ fn suggestion_row(
             Vec2::splat(SUGGESTION_ART),
         );
         paint_cover(ui, palette, art, cover_rect, 6.0, Icon::Music, None);
-        text_left = cover_rect.right() + 12.0;
+        cover_rect.right() + 12.0
     } else {
         // The magnifier and the words keep the pill's own columns, so the
         // panel reads as one piece with it.
@@ -3388,8 +3387,8 @@ fn suggestion_row(
         Icon::Search
             .image(palette.secondary, 16.0)
             .paint_at(ui, icon_rect);
-        text_left = rect.left() + 34.0;
-    }
+        rect.left() + 34.0
+    };
     let mut title_galley = ui.painter().layout_no_wrap(
         title.clone(),
         theme::regular(if row.media() { 15.0 } else { 14.5 }),
