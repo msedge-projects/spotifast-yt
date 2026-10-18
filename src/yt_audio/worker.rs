@@ -593,10 +593,18 @@ mod tests {
         }
 
         // The whole three-second fixture decodes quickly through the fake
-        // sink; wait until close to its frame count has passed through.
+        // sink. Wait for the count to settle instead of for a threshold:
+        // the decode burst can outrun a polling interval, and the read
+        // then lands mid-burst.
         let deadline = Instant::now() + Duration::from_secs(15);
+        let mut settled = Instant::now();
+        let mut seen = 0;
         while Instant::now() < deadline {
-            if *frames.lock().unwrap_or_else(|p| p.into_inner()) >= 44_100 * 2 {
+            let now = *frames.lock().unwrap_or_else(|p| p.into_inner());
+            if now != seen {
+                seen = now;
+                settled = Instant::now();
+            } else if settled.elapsed() > Duration::from_millis(500) {
                 break;
             }
             thread::sleep(Duration::from_millis(20));
