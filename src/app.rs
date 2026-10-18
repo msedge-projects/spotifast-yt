@@ -13612,9 +13612,53 @@ mod tests {
         }
     }
 
+    /// A frame of the glass mini player in a headless context.
+    fn draw_glass(
+        ctx: &egui::Context,
+        app: &mut App,
+        window: egui::Rect,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(window),
+                time: Some(1.0),
+                events,
+                ..Default::default()
+            },
+            |ui| app.frame_ui(ui),
+        )
+    }
+
+    fn glass_window(app: &App) -> egui::Rect {
+        egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            crate::ui::glass::window_size(&app.settings),
+        )
+    }
+
+    fn glass_press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// Whether a frame asked the operating system to move the window.
+    fn started_a_drag(output: &egui::FullOutput) -> bool {
+        output.viewport_output.values().any(|viewport| {
+            viewport
+                .commands
+                .iter()
+                .any(|command| matches!(command, egui::ViewportCommand::StartDrag))
+        })
+    }
+
     /// The glass player's way home works: with nothing playing, the one
-    /// button is "Open the main window", and a click on it leaves the
-    /// mini player.
+    /// button is "Open the main window", a click on it leaves the mini
+    /// player, and the press must not start a window move on the way.
     #[test]
     fn clicking_the_glass_players_way_home_leaves_the_mini_player() {
         let ctx = egui::Context::default();
@@ -13622,35 +13666,20 @@ mod tests {
         app.attach(&ctx);
         app.settings.winamp_window = true;
         app.settings.skin = None;
-        let window = egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            crate::ui::glass::window_size(&app.settings),
-        );
+        let window = glass_window(&app);
         let at = crate::ui::glass::home_pill_rect(window).center();
-        let mut draw = |app: &mut App, events: Vec<egui::Event>| {
-            ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(window),
-                    time: Some(1.0),
-                    events,
-                    ..Default::default()
-                },
-                |ui| app.frame_ui(ui),
-            );
-        };
         // Two still frames so the widgets are laid out before the click.
-        draw(&mut app, vec![]);
-        draw(&mut app, vec![]);
+        draw_glass(&ctx, &mut app, window, vec![]);
+        draw_glass(&ctx, &mut app, window, vec![]);
         assert!(app.settings.winamp_window, "the mini player is the window");
-        let press = |pressed| egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        draw(&mut app, vec![egui::Event::PointerMoved(at)]);
-        draw(&mut app, vec![press(true)]);
-        draw(&mut app, vec![press(false)]);
+        draw_glass(&ctx, &mut app, window, vec![egui::Event::PointerMoved(at)]);
+        let pressing = draw_glass(&ctx, &mut app, window, vec![glass_press(at, true)]);
+        assert!(
+            !started_a_drag(&pressing),
+            "the press must not move the window"
+        );
+        let releasing = draw_glass(&ctx, &mut app, window, vec![glass_press(at, false)]);
+        assert!(!started_a_drag(&releasing));
         assert!(
             !app.settings.winamp_window,
             "the button goes back to the main window"
@@ -13667,37 +13696,43 @@ mod tests {
         crate::demo::populate(&mut app);
         app.settings.winamp_window = true;
         app.settings.skin = None;
-        let window = egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            crate::ui::glass::window_size(&app.settings),
-        );
+        let window = glass_window(&app);
         let at = crate::ui::glass::close_rect(crate::ui::glass::panel_rect(window)).center();
-        let mut draw = |app: &mut App, events: Vec<egui::Event>| {
-            ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(window),
-                    time: Some(1.0),
-                    events,
-                    ..Default::default()
-                },
-                |ui| app.frame_ui(ui),
-            );
-        };
-        draw(&mut app, vec![]);
-        draw(&mut app, vec![]);
-        let press = |pressed| egui::Event::PointerButton {
-            pos: at,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        draw(&mut app, vec![egui::Event::PointerMoved(at)]);
-        draw(&mut app, vec![press(true)]);
-        draw(&mut app, vec![press(false)]);
+        draw_glass(&ctx, &mut app, window, vec![]);
+        draw_glass(&ctx, &mut app, window, vec![]);
+        draw_glass(&ctx, &mut app, window, vec![egui::Event::PointerMoved(at)]);
+        let pressing = draw_glass(&ctx, &mut app, window, vec![glass_press(at, true)]);
+        assert!(!started_a_drag(&pressing));
+        draw_glass(&ctx, &mut app, window, vec![glass_press(at, false)]);
         assert!(
             !app.settings.winamp_window,
             "the close chip goes back to the main window"
         );
+        app.backend.shutdown();
+    }
+
+    /// Dragging the empty margin really moves the window, so the panel is
+    /// still draggable where no control sits.
+    #[test]
+    fn dragging_the_glass_players_empty_space_starts_a_window_move() {
+        let ctx = egui::Context::default();
+        let mut app = test_app("glass-drag-move");
+        app.attach(&ctx);
+        app.settings.winamp_window = true;
+        app.settings.skin = None;
+        let window = glass_window(&app);
+        draw_glass(&ctx, &mut app, window, vec![]);
+        draw_glass(&ctx, &mut app, window, vec![]);
+        let empty = egui::pos2(4.0, window.center().y);
+        draw_glass(&ctx, &mut app, window, vec![egui::Event::PointerMoved(empty)]);
+        draw_glass(&ctx, &mut app, window, vec![glass_press(empty, true)]);
+        let moved = draw_glass(
+            &ctx,
+            &mut app,
+            window,
+            vec![egui::Event::PointerMoved(empty + egui::vec2(60.0, 0.0))],
+        );
+        assert!(started_a_drag(&moved), "a real drag moves the window");
         app.backend.shutdown();
     }
 

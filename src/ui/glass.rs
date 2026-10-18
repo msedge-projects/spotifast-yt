@@ -181,9 +181,16 @@ fn paint_panel(ui: &Ui, palette: &theme::Palette, rect: Rect) {
     );
 }
 
-/// The window drags from anywhere the controls are not.
+/// The window drags from anywhere the controls are not. The sense is
+/// click-and-drag on purpose: a drag-only background is marked dragged
+/// the moment a press lands, even on a button over it, which would fire a
+/// window move and swallow the click; this sense waits for real movement.
 fn drag_anywhere(ui: &mut Ui, rect: Rect) {
-    let response = ui.interact(rect.shrink(2.0), Id::new("glass-drag"), Sense::drag());
+    let response = ui.interact(
+        rect.shrink(2.0),
+        Id::new("glass-drag"),
+        Sense::click_and_drag(),
+    );
     if response.drag_started_by(egui::PointerButton::Primary) {
         ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
     }
