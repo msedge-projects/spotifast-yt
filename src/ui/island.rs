@@ -88,6 +88,11 @@ fn window_size_for(visible: bool, open: bool) -> Vec2 {
     }
 }
 
+/// The size the window should be born with, for whoever creates it.
+pub fn wanted_size(state: &IslandState) -> Vec2 {
+    window_size_for(state.visible, state.open)
+}
+
 /// The morph's speed multiplier.
 fn rate(morph: f32) -> f64 {
     (1.6 - (morph / 100.0) * 1.2) as f64

@@ -762,7 +762,7 @@ impl MiniWindow {
         // the pointer finds it.
         if app.island_window {
             return Some(Self {
-                size: musify::ui::island::RESTING_SIZE,
+                size: musify::ui::island::wanted_size(&app.island),
                 geometry: Geometry::default(),
                 on_top: true,
                 taskbar: false,
