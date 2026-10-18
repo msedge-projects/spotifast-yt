@@ -1313,7 +1313,16 @@ fn format_score(format: &Value, duration_seconds: u64) -> Option<u64> {
         return None;
     }
     let lower = mime.to_ascii_lowercase();
-    if !(lower.contains("mp4a") || lower.contains("opus") || lower.contains("vorbis")) {
+    // With a codecs list, only the codecs this engine reads count; without
+    // one, the container decides (YouTube's webm audio is Opus or Vorbis,
+    // its mp4 audio AAC).
+    let decodable = match lower.split_once("codecs=") {
+        Some((_, codecs)) => {
+            codecs.contains("mp4a") || codecs.contains("opus") || codecs.contains("vorbis")
+        }
+        None => lower.starts_with("audio/webm") || lower.starts_with("audio/mp4"),
+    };
+    if !decodable {
         return None;
     }
     let derived = if duration_seconds > 0 {

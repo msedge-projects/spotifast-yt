@@ -324,7 +324,13 @@ mod tests {
                     .and_then(|start| start.parse::<usize>().ok())
                     .unwrap_or(0)
                     .min(bytes.len());
-                let slice = &bytes[start..];
+                // A server that ignores ranges answers 200 with the whole
+                // body, not with a slice, however the request asked.
+                let slice: &[u8] = if mode == Stub::Ignoring {
+                    &bytes[..]
+                } else {
+                    &bytes[start..]
+                };
                 let head = if mode == Stub::Honoring && start > 0 {
                     format!(
                         "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{last}/{total}\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n",
