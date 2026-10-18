@@ -224,7 +224,7 @@ impl Stream {
                     if self.pending.is_empty() {
                         return Ok(None);
                     }
-                    let chunk: Vec<f64> = self.pending.drain(..).collect();
+                    let chunk: Vec<f64> = std::mem::take(&mut self.pending);
                     return Ok(Some(chunk));
                 }
             }

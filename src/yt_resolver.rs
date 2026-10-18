@@ -28,8 +28,10 @@ pub(crate) struct Resolved {
     pub url: String,
     pub ttl: Duration,
     /// The format's own mime type when the player response named one.
+    #[expect(dead_code, reason = "the engine reads it when it loads a stream")]
     pub mime: Option<String>,
     /// The stream's byte length when known.
+    #[expect(dead_code, reason = "the engine reads it when it loads a stream")]
     pub content_length: Option<u64>,
     /// The next-best candidates, best first, for a stream this engine
     /// cannot open (each carries no fallbacks of its own).
@@ -203,10 +205,6 @@ pub struct MusicSearch {
     pub albums: Vec<YtAlbum>,
     pub playlists: Vec<YtPlaylist>,
 }
-
-/// The life given to URLs whose own lifetime is not known (the yt-dlp path
-/// reports none).
-pub(crate) const DEFAULT_URL_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// How long a URL without an `expire` parameter is assumed good for.
 const ASSUMED_URL_TTL: Duration = Duration::from_secs(6 * 60 * 60);
@@ -1281,7 +1279,7 @@ fn pick_audio(response: &Value) -> Option<Resolved> {
         .filter_map(|format| format_score(format, duration_seconds).map(|score| (score, format)))
         .collect();
     // Stable, so equally-scored formats keep the response's own order.
-    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
 
     let build = |format: &Value| -> Option<Resolved> {
         let url = format.get("url").and_then(Value::as_str)?.to_string();

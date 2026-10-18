@@ -305,49 +305,49 @@ fn run(
         // Nothing to obey: move one packet (or wait for the queue to play
         // the tail out).
         let mut outcome = None;
-        if let Some(current) = &mut live {
-            if !paused {
-                match current.stream.next_chunk() {
-                    Ok(Some(samples)) => {
-                        if !current.opened_sent {
-                            current.opened_sent = true;
-                            let _ = events.send(AudioEvent::Opened {
-                                seq: current.seq,
-                                opened: current.opened,
-                                first_audio_ms: current.loaded_at.elapsed().as_millis() as u64,
-                            });
-                        }
-                        let frames = (samples.len() / NUM_CHANNELS as usize) as u64;
-                        let packet = AudioPacket::Samples(samples);
-                        match sink.write(packet, &mut converter) {
-                            Ok(()) => {
-                                current.decoded_ms +=
-                                    frames.saturating_mul(1000) / u64::from(SAMPLE_RATE);
-                            }
-                            Err(error) => {
-                                outcome = Some(Outcome::Failed {
-                                    seq: current.seq,
-                                    failure: Failure::Output(error.to_string()),
-                                    position_ms: current.played_ms(&control),
-                                });
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        let played = current.played_ms(&control);
-                        if played + END_SLACK_MS >= current.decoded_ms {
-                            outcome = Some(Outcome::Ended { seq: current.seq });
-                        } else {
-                            thread::sleep(DRAIN_STEP);
-                        }
-                    }
-                    Err(error) => {
-                        outcome = Some(Outcome::Failed {
+        if let Some(current) = &mut live
+            && !paused
+        {
+            match current.stream.next_chunk() {
+                Ok(Some(samples)) => {
+                    if !current.opened_sent {
+                        current.opened_sent = true;
+                        let _ = events.send(AudioEvent::Opened {
                             seq: current.seq,
-                            failure: map_decode(error),
-                            position_ms: current.played_ms(&control),
+                            opened: current.opened,
+                            first_audio_ms: current.loaded_at.elapsed().as_millis() as u64,
                         });
                     }
+                    let frames = (samples.len() / NUM_CHANNELS as usize) as u64;
+                    let packet = AudioPacket::Samples(samples);
+                    match sink.write(packet, &mut converter) {
+                        Ok(()) => {
+                            current.decoded_ms +=
+                                frames.saturating_mul(1000) / u64::from(SAMPLE_RATE);
+                        }
+                        Err(error) => {
+                            outcome = Some(Outcome::Failed {
+                                seq: current.seq,
+                                failure: Failure::Output(error.to_string()),
+                                position_ms: current.played_ms(&control),
+                            });
+                        }
+                    }
+                }
+                Ok(None) => {
+                    let played = current.played_ms(&control);
+                    if played + END_SLACK_MS >= current.decoded_ms {
+                        outcome = Some(Outcome::Ended { seq: current.seq });
+                    } else {
+                        thread::sleep(DRAIN_STEP);
+                    }
+                }
+                Err(error) => {
+                    outcome = Some(Outcome::Failed {
+                        seq: current.seq,
+                        failure: map_decode(error),
+                        position_ms: current.played_ms(&control),
+                    });
                 }
             }
         }
