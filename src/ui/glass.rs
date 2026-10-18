@@ -370,15 +370,37 @@ fn transport_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rec
     let repeat_rect = slot(sizes[4]);
 
     let shuffle_title = gettext(app.locale, "Shuffle");
-    let response = icon_button(ui, shuffle_rect, Id::new("glass-shuffle"), Icon::Shuffle, 17.0, state_color(palette, shuffle), control, palette)
-        .on_hover_text(shuffle_title.as_ref());
+    let response = icon_button(
+        ui,
+        shuffle_rect,
+        Id::new("glass-shuffle"),
+        Glyph {
+            icon: Icon::Shuffle,
+            size: 17.0,
+            color: state_color(palette, shuffle),
+        },
+        control,
+        palette,
+    )
+    .on_hover_text(shuffle_title.as_ref());
     if response.clicked() {
         app.actions.push(Action::ToggleShuffle);
     }
 
     let previous_title = gettext(app.locale, "Previous");
-    let response = icon_button(ui, previous_rect, Id::new("glass-previous"), Icon::SkipBackFilled, 20.0, icon_color(palette, control), control, palette)
-        .on_hover_text(previous_title.as_ref());
+    let response = icon_button(
+        ui,
+        previous_rect,
+        Id::new("glass-previous"),
+        Glyph {
+            icon: Icon::SkipBackFilled,
+            size: 20.0,
+            color: icon_color(palette, control),
+        },
+        control,
+        palette,
+    )
+    .on_hover_text(previous_title.as_ref());
     if response.clicked() {
         app.actions.push(Action::Previous);
     }
@@ -417,8 +439,19 @@ fn transport_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rec
     });
 
     let next_title = gettext(app.locale, "Next");
-    let response = icon_button(ui, next_rect, Id::new("glass-next"), Icon::SkipForwardFilled, 20.0, icon_color(palette, control), control, palette)
-        .on_hover_text(next_title.as_ref());
+    let response = icon_button(
+        ui,
+        next_rect,
+        Id::new("glass-next"),
+        Glyph {
+            icon: Icon::SkipForwardFilled,
+            size: 20.0,
+            color: icon_color(palette, control),
+        },
+        control,
+        palette,
+    )
+    .on_hover_text(next_title.as_ref());
     if response.clicked() {
         app.actions.push(Action::Next);
     }
@@ -433,8 +466,19 @@ fn transport_row(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rec
     } else {
         Icon::Repeat
     };
-    let response = icon_button(ui, repeat_rect, Id::new("glass-repeat"), repeat_icon, 17.0, state_color(palette, repeat != RepeatMode::Off), control, palette)
-        .on_hover_text(repeat_title.as_ref());
+    let response = icon_button(
+        ui,
+        repeat_rect,
+        Id::new("glass-repeat"),
+        Glyph {
+            icon: repeat_icon,
+            size: 17.0,
+            color: state_color(palette, repeat != RepeatMode::Off),
+        },
+        control,
+        palette,
+    )
+    .on_hover_text(repeat_title.as_ref());
     if response.clicked() {
         app.actions.push(Action::CycleRepeat);
     }
@@ -611,14 +655,19 @@ fn equalizer(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rect) {
     }
 }
 
+/// One glyph in a glass button: what to draw and how.
+struct Glyph {
+    icon: Icon,
+    size: f32,
+    color: Color32,
+}
+
 /// One small icon button: a glass fill under the pointer, the icon on it.
 fn icon_button(
     ui: &mut Ui,
     rect: Rect,
     id: Id,
-    icon: Icon,
-    size: f32,
-    color: Color32,
+    glyph: Glyph,
     enabled: bool,
     palette: &theme::Palette,
 ) -> Response {
@@ -627,7 +676,7 @@ fn icon_button(
         ui.painter()
             .rect_filled(rect, 10.0, glass_button_fill(palette, true));
     }
-    theme::paint_icon(ui, icon, rect, size, color);
+    theme::paint_icon(ui, glyph.icon, rect, glyph.size, glyph.color);
     if enabled {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
