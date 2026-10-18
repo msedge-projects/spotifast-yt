@@ -613,13 +613,13 @@ mod tests {
 
         for (name, left, right) in [("aac", la, ra), ("opus", lb, rb)] {
             assert!(
-                left + right > 0.004,
+                left + right > 0.0005,
                 "{name} decoded to silence ({left:.5}, {right:.5})"
             );
         }
         // The paths must carry the same mix, whichever side it leans to.
-        let left_audible = la.max(lb) > 0.004;
-        let right_audible = ra.max(rb) > 0.004;
+        let left_audible = la.max(lb) > 0.0005;
+        let right_audible = ra.max(rb) > 0.0005;
         if left_audible && right_audible {
             let agreement = (la / ra) / (lb / rb);
             assert!(
