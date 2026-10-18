@@ -104,7 +104,7 @@ pub(crate) fn panel_rect(window: Rect) -> Rect {
 }
 
 /// The panel's three rows: the artwork, the seek line, and the transport.
-fn rows(rect: Rect) -> (Rect, Rect, Rect) {
+pub(crate) fn rows(rect: Rect) -> (Rect, Rect, Rect) {
     let left = rect.left() + PAD;
     let width = rect.width() - PAD * 2.0;
     let art = Rect::from_min_size(pos2(left, rect.top() + PAD), Vec2::splat(ART));
@@ -204,13 +204,9 @@ pub(crate) fn close_rect(rect: Rect) -> Rect {
     )
 }
 
-/// The way-home button's rect, shown while nothing is playing.
-pub(crate) fn home_pill_rect(window: Rect) -> Rect {
-    let (_, _, transport) = rows(panel_rect(window));
-    home_pill(transport)
-}
-
-fn home_pill(transport: Rect) -> Rect {
+/// The way-home button's rect inside the transport row, shown while
+/// nothing is playing.
+pub(crate) fn home_pill(transport: Rect) -> Rect {
     Rect::from_center_size(transport.center(), vec2(216.0, 36.0))
 }
 

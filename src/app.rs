@@ -13667,7 +13667,10 @@ mod tests {
         app.settings.winamp_window = true;
         app.settings.skin = None;
         let window = glass_window(&app);
-        let at = crate::ui::glass::home_pill_rect(window).center();
+        let at = crate::ui::glass::home_pill(
+            crate::ui::glass::rows(crate::ui::glass::panel_rect(window)).2,
+        )
+        .center();
         // Two still frames so the widgets are laid out before the click.
         draw_glass(&ctx, &mut app, window, vec![]);
         draw_glass(&ctx, &mut app, window, vec![]);
