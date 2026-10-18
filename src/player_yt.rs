@@ -707,18 +707,13 @@ impl Actor {
             // Resolved already, by the prefetch made while the last song
             // played, or by an earlier play: start without yt-dlp.
             log::info!("YouTube: reusing a cached URL for {}", entry.track.title);
+            let url = cached.url.clone();
+            let mime = cached.mime.clone();
+            let length = cached.content_length;
             self.awaiting = false;
             if let Some(native) = &self.native {
-                native.load(
-                    &cached.url,
-                    cached.content_length,
-                    cached.mime.as_deref(),
-                    position_ms,
-                    fade,
-                    id,
-                );
+                native.load(&url, length, mime.as_deref(), position_ms, fade, id);
             } else {
-                let url = cached.url.clone();
                 self.send(json!(["loadfile", url, "replace"]));
                 if position_ms > 0 {
                     self.seek_command(position_ms);
@@ -1411,8 +1406,7 @@ impl Actor {
                 }
                 self.loaded = false;
                 let detail = match failure {
-                    Failure::Unsupported(detail) => detail,
-                    Failure::Stream(detail) => detail,
+                    Failure::Unsupported(detail) | Failure::Stream(detail) => detail,
                     Failure::Output(detail) => format!("the audio output stopped: {detail}"),
                 };
                 let position = position_ms.min(u64::from(u32::MAX)) as u32;

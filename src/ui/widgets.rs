@@ -3365,7 +3365,7 @@ fn suggestion_row(
             .rect_filled(rect, CornerRadius::same(6), hover_fill);
     }
     let (title, subtitle) = row.label(locale);
-    let mut text_left = rect.left() + 16.0;
+    let text_left;
     if row.media() {
         let art = match row {
             Suggestion::Song { art, .. }
