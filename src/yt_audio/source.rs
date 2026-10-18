@@ -141,24 +141,22 @@ impl RangeSource {
 
     /// Issues one ranged request at `start` and keeps its body.
     fn request(&self, inner: &mut Inner, start: u64) -> io::Result<()> {
-        // Always a ranged read, even from the start: a plain GET is the
-        // shape googlevideo throttles and sometimes drops (the probe's
-        // curl matrix settled it), while a ranged read streams steadily.
-        // The matching `range` query parameter is what YouTube's own
-        // player sends, and the two must agree.
-        let separator = if self.url.contains('?') { '&' } else { '?' };
-        let url = format!("{}{}range={start}-", self.url, separator);
+        // A ranged read, even from the start: a plain GET is the shape
+        // googlevideo throttles and sometimes drops. The range travels as
+        // the header alone; appending YouTube's `range=` query parameter
+        // as well compounds the two (a request for byte 116 answered
+        // `bytes 116-3704090/3704091`), which desynchronizes the stream
+        // past the first request.
         let response = self
             .client
-            .get(&url)
+            .get(&self.url)
             .header(RANGE, format!("bytes={start}-"))
             .send()
             .map_err(|error| link(LinkFailure::Transport, format!("request failed: {error}")))?;
         log::debug!(
-            "yt_audio: range {start}- answered {} {:?} (url {} bytes)",
+            "yt_audio: range {start}- answered {} {:?}",
             response.status().as_u16(),
-            response.headers(),
-            url.len()
+            response.headers()
         );
         let status = response.status();
         if matches!(
