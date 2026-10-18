@@ -18,7 +18,7 @@ use egui::{
 };
 
 use crate::app::{App, NowPlaying};
-use crate::i18n::{Locale, gettext, pgettext};
+use crate::i18n::{gettext, pgettext};
 use crate::model::{Action, Page};
 use crate::player::RepeatMode;
 use crate::theme::{self, Icon};
@@ -555,9 +555,8 @@ fn equalizer(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rect) {
         );
         let response = ui.interact(area, Id::new(("glass-eq-band", index)), Sense::click_and_drag());
         let track = Rect::from_center_size(area.center(), vec2(4.0, area.height() - 8.0));
-        let y_of = |db: f64| {
-            track.bottom() - ((db + f64::from(range)) / f64::from(2.0 * range)) as f32 * track.height()
-        };
+        let y_of =
+            |db: f32| track.bottom() - (db + range) / (2.0 * range) * track.height();
         let mut changed = false;
         if response.double_clicked() {
             value = 0.0;
@@ -566,7 +565,7 @@ fn equalizer(app: &mut App, ui: &mut Ui, palette: &theme::Palette, rect: Rect) {
             && let Some(pos) = response.interact_pointer_pos()
         {
             let db = (track.bottom() - pos.y) / track.height() * 2.0 * range - range;
-            let db = (db.clamp(-range, range) * 10.0).round() as f64 / 10.0;
+            let db = (db.clamp(-range, range) * 10.0).round() / 10.0;
             if db != value {
                 value = db;
                 changed = true;
