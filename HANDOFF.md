@@ -1,128 +1,190 @@
-# HANDOFF — spotifast-yt (YouTube playback engine fork)
+# Session handoff: Musify / spotifast-yt
 
-Session handoff for continuing this project on another machine. Everything needed is in this repository. Read this file, then `YT-ENGINE-PLAN.md` (the full implementation map with file:line references), then `notes/mpv-spike/` (raw integration evidence).
+Written at the end of a long working session, for the next session to take over.
+Date: Mon Oct 19 2026. Everything below is verified state unless marked otherwise.
 
-## Mission
+---
 
-A personal fork of Spotifast (native Rust Spotify client, egui UI), renamed to **Musify**, that lets a **free (non-Premium) Spotify account** play music, with audio streamed from YouTube instead of Spotify's servers. UI, browsing, playlists, and everything else stay the upstream client's. Premium accounts keep the unmodified librespot engine. This fork is **personal**: upstream's `AGENTS.md` forbids alternate audio sources (that is a contribution/product policy for crmne's repository, not a license restriction; the fork is MIT). Do not upstream it; do not file issues about it.
+## 1. The project
 
-## Non-negotiable constraints (from the user)
+- Repo: `C:\Users\DELL\spotifast-yt` (fork of crmne/musify, "Musify"), remote `https://github.com/msedge-projects/spotifast-yt`.
+- Rule: commit to the fork's `main` only. Never touch upstream crmne/spotifast or crmne/musify.
+- Fork identity: fully YouTube-based playback. Spotify is used for browsing/metadata; audio comes from YouTube via the app's own in-process engine (no mpv in the default path).
+- Code head at handoff: `7473c3f` "Be born the size the island already is". The working tree is clean apart from this handoff document, which is committed on top of it; nothing else changed. `origin/main` and `origin/scratch/native-player` carry the same code (scratch is force-pushed from main; the VPS check script checks out scratch).
 
-- Free tier only; no Premium anywhere.
-- CPU is the hard constraint (machine: 2014-era i3-4150, 2C/4T). The user rejected download/transcode pipelines (ffmpeg bursts). The accepted design is a ~1 s flag-only `yt-dlp` resolve per track change plus ~1–3% of one core while mpv decodes.
-- ("no yt-dlp" was the user's wish, **proven impossible** — see Decisions. Do not retry removing it; do not propose heavier alternatives.)
-- Native Rust, light; no Electron; the UI stays the upstream client's.
-- Builds happen via GitHub Actions, not local compilation ("instead of compiling in my pc ... use actions").
+Repo docs worth reading (older context, partly superseded):
+- `YT-ENGINE-PLAN.md` — the original implementation map with file:line references for the first YouTube engine. Still useful for the resolver/metadata design; the playback path has since been rebuilt (this handoff supersedes it for anything engine-related).
+- `notes/mpv-spike/` — raw evidence from the original yt-dlp + mpv integration (yt-dlp output shapes, mpv JSON IPC logs). mpv is now only the `MUSIFY_YT_PLAYER=mpv` escape, but the evidence is still the reference for resolve behaviour.
+- `.github/workflows/` — upstream's CI (build.yml builds a Windows exe, ci.yml runs the suite). For this fork the VPS is the primary build/test path; CI is a fallback only.
+- This file itself was rewritten in place: the previous `HANDOFF.md` (2026-10-15, mpv-era) remains in git history (see the tree at commit `b0783cb`).
 
-## Where things are
+## 2. Standing user requirements
 
-- Repo (public): https://github.com/msedge-projects/spotifast-yt — account `msedge-projects` (gh CLI). On the new machine: `gh auth login` (that account), then `gh repo clone msedge-projects/spotifast-yt`.
-- Base: crmne/spotifast v0.13.2, full history; `upstream` remote points at crmne/spotifast — never push there.
-- `YT-ENGINE-PLAN.md` — implementation map: exact files, line refs, ordered edit list, risks. **Read first.**
-- `notes/mpv-spike/` — snapshot of the yt-dlp + mpv integration proof from the original machine: exact `yt-dlp` output shapes, mpv JSON IPC log, the scripts used. Re-run a small spike on the new machine if anything is unclear.
-- `.github/workflows/build.yml` — the CI that builds the exe. Upstream also ships ~9 other workflows that fire in this fork (board, docs, release, issue triage...); ignore their noise or trim them. `ci.yml` is upstream's test suite if you want free test coverage.
+- **Never compile on the PC.** All builds, checks, tests, and renders happen on the VPS. The PC is a low-end i3-4150 (global AGENTS.md says use InstaBox for heavy work; the working machine is the InstaBox VM named vps1).
+- Do not open/run/test the Musify app on the PC unless the user asks. Exceptions they have been fine with: `musify.exe --version`, killing/starting the app to install a build, and screen/window screenshots for diagnosis.
+- Search UX parity target is music.apple.com: frosting, pill, live suggestion panel; values were measured from Apple earlier.
+- The user hands over design references as web code (React/TSX/CSS) and expects faithful ports into the app's native egui renderer. This app must not embed a browser engine (repo AGENTS.md). Port numbers/curves exactly; disclose what cannot map (real desktop backdrop blur, web fonts).
+- Never use em dashes in public repo/issue copy. In chat, keep the same calm style (full stops, commas).
+- Windows exe delivery flow: cross-build on vps1, scp to PC, MD5-verify, install with a backup, relaunch.
+- Never print the InstaBox API key or any token. The key lives in `C:\Users\DELL\.instabox.key` and `$env:INSTABOX_API_KEY`.
+- Repo rules (see repo AGENTS.md): work on main, one topic per commit, linear history, no merge commits, no CI babysitting. CI is the last resort for a Windows exe; the VPS is preferred.
 
-## State (2026-10-15)
+## 3. State of the work (what is done and verified)
 
-- On top of upstream: the Windows build workflow, the README notice, the
-  handoff docs, the **Musify rename** (`cb10ba3`; red branding, binary
-  `musify.exe`, artifact `musify-windows-x64`, app id
-  `io.github.msedge_projects.Musify`, fresh data folders), the rename's
-  follow-up fixes (`0e30835` tray template mask, `8814d66` flake vendor
-  hash, `0ee3d5c` Packaging trigger), and the **YouTube engine**
-  (`b6d4466`, `src/player_yt.rs`).
-- Free accounts route to the YouTube engine automatically once the account
-  check answers; Premium keeps the untouched librespot engine. Metadata
-  rides `LoadSpec::tracks`, `AddToQueue { uri, track }` and the deferred
-  `SetTrackMetadata`; the engine owns queue advancement. In YouTube mode
-  the queue panel is built from app state (the user's rows, then the rest
-  of the context); Spotify's queue endpoint is not polled for it.
-- Verified locally (Linux, `--no-default-features`): the full test suite
-  (1186 lib tests plus the integration suites), `--all-features` clippy and
-  rustdoc with `-D warnings`, and `examples/yt_probe.rs` end to end with a
-  stub yt-dlp and mpv 0.37 (connect, resolve, play, seek, volume,
-  pause/resume, Previous, end-of-track advance, repeat-track, repeat-context,
-  queued Next, deferred `SetTrackMetadata`, resume-point metadata).
-- The Windows artifact builds green, carries the red icon at every size
-  (verified inside the exe), and imports no MSVC runtime. The artifact of
-  record is the `build` run on the final green `main` commit.
-- Ads: the resolved stream is audio-only, so YouTube's player-stitched ads
-  never reach mpv; in-content sponsor reads remain (SponsorBlock would be a
-  separate, explicit feature). Faking Premium stays out.
-- Not yet run: the real YouTube resolve from the fork's UI on the user's
-  Windows machine with real yt-dlp + mpv, and any macOS runtime testing.
+### 3.1 Native YouTube audio engine (stage 2, wired in)
+- `src/yt_audio/` (source.rs, worker.rs, decode.rs): symphonia demux for fragmented MP4/AAC and WebM/Opus (plus rare Vorbis), Opus through `rusty-opus =1.0.2`, decode into interleaved stereo f64 at 44.1 kHz, 512-frame packets.
+- `source.rs`: a range-backed burst buffer. Hard-won wire facts: send only a `Range: bytes=N-` header (the `&range=` query param compounds), set a UA, `http1_only`, drain bodies at full speed, in-window seeks free, 30 s stall ceiling.
+- The worker builds the same sink chain as Spotify mode (`sink::build_chain` + `SharedVolume`), so EQ and visualizers work on YouTube songs.
+- `src/player_yt.rs`: the engine actor drives the worker by default; the mpv child-process backend is kept behind `MUSIFY_YT_PLAYER=mpv` for the transition. User-chosen changes fade; natural transitions do not; one re-resolve on failure then an honest error.
+- Stage 3 (remove mpv entirely) is still pending the user's approval after living with it.
 
-The workflow (`.github/workflows/build.yml`) is:
+### 3.2 Duration bug (fixed)
+- YouTube's fragmented stream header states its first segment's length (~4.19 s) and used to overwrite the true song length with it (user saw 0:04 on "Creepin'"). Now the metadata duration wins; the header only fills in when metadata has none. In `player_yt.rs` (`AudioEvent::Opened` handler).
 
-```yaml
-name: build
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-jobs:
-  windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
-      - name: Build
-        run: cargo build --release --no-default-features
-      - uses: actions/upload-artifact@v4
-        with:
-          name: musify-windows-x64
-          path: target/release/musify.exe
-          if-no-files-found: error
+### 3.3 Search behavior (Apple parity, done)
+- Typing updates only the suggestion panel; the results page keeps its last committed query and loads on Enter or on clicking a row (song plays, artist/album/playlist opens, keyword runs the search).
+- State split in `SearchState`: `results` (page, committed) vs `suggestions` + `suggestions_playlists` (panel, typed preview). `typed: Option<String>` marks the newest typed run. Response handlers in `app.rs` have preview branches. `run_search` clears the preview state. Search history semantics preserved (a submitted entry survives later typing in the same run; tests cover it).
+- Panel height bug fixed: the ScrollArea alone could stay at the first row's height, so the panel showed 1-2 rows then scrolled. `widgets.rs::search_suggestions` now computes `content_height` from the rows (36/58 px), caps at `(screen * 0.62).clamp(240, 640)`, and calls `ui.set_height(height)`. Do not remove that explicit height.
+- Demo: the search demo seeds `app.search.suggestions = app.search.results.clone()` so the panel draws.
+
+### 3.4 Title strip ("transparent head") — reverted by the user
+- The app's Mica attempt exists (`window::set_backdrop_mica`, Win11 22H2+) but the user's PC is **Windows 10 build 18362**, so it fails harmlessly and the caption tint path runs. The user asked for the head to be reverted; their `settings.json` now has `"custom_titlebar": false` and the standard window strip is back.
+- The Mica block is skipped for the mini/island windows (`entrypoint.rs` run_logic: `window_hwnd != 0 && !app.settings.winamp_window`).
+- If they ever move to Win11, Mica will make the main title strip glass automatically.
+
+### 3.5 Glass mini player — built, then deleted at the user's request
+- `src/ui/glass.rs` was implemented (frosted flop, floating panel with margin/shadow, EQ with ten bands, a way-home button, tests that clicks are not eaten). The user reverted it in favour of the island. The module and its tests are deleted; `Ctrl+M` opens the classic Winamp mini player again (`winamp::initial_size` restored; topbar tooltip reverted to "Winamp mini player (Ctrl+M)").
+- Keep the lesson (section 9): the background drag layer must sense click_and_drag, not drag alone.
+
+### 3.6 The island (Dynamic Island) — built and installed now
+This is the current feature and the most recent work. Basis: the user supplied a full React `Sound.tsx` + `Sound.css` reference (a 260-wide pill that morphs into a player card). Their choices:
+- Variant **B**: nothing visible until the pointer reaches the top-centre of the screen; a thin strip catches it.
+- It replaces the mini-player idea; it appears when the main window is **minimized**.
+
+Behavior implemented in `src/ui/island.rs` + wiring:
+- While `app.island_window` is true the app is a borderless, transparent, always-on-top window (no taskbar entry), created at 260x8 (`RESTING_SIZE`), centred at the top of the monitor by `place_window` on the first frame.
+- Hover the strip → window grows to the pill (260x78) and the pill slides down (appear tween 0.32 s quart-out), the whole pane fading in.
+- Click the pill → the card opens (260x189): one quart-out tween of 460 ms at the design's `morph=50`, driving height 78→189, sleeve 40→64, radii (sleeve corner 10→16; box corner 20→26, kept concentric), type sizes 13→15.5 / 11→12, the transport from 24/30/24 right-aligned (gap 5) to 34/46/34 centred (gap 14), the rail from the bar's foot to `RAIL_Y=96`, and a `late` window (p>0.6) for the clock and heart. Close-only gather on its own linear clock (`sin(pi*u^1.5)`, zoom to 0.965). The play mark is drawn as two morphing quadrilaterals with the goo pull/tilt/squash, 300 ms swing.
+- Leave the card ~0.7 s → folds to the pill; leave the pill ~0.5 s → folds away and the window returns to the strip. Clicking the sleeve/words folds the card immediately (the reference's tap semantics: whole bar shut, sleeve+words open).
+- Real data wired: album art, title/artist from now-playing, rail + clock from actual position/duration (`1:29` / `−1:30` style), play/restart/next control real playback, heart is the real Liked state with the beat-on-like.
+- **One disclosed addition**: a way-home button (expand icon) at the right end of the transport row, because a borderless strip has no taskbar entry. `Escape` also returns to the main window. Action: `Action::IslandToMain` sets `island_window=false`, `switch_intent=true`, closes the window.
+- Trigger: in `App::frame_ui`, when not already the island and `viewport().minimized == Some(true)`, set `island_window=true`, `switch_intent=true`, close; the shell loop then creates the island window via `MiniWindow::wanted`'s island branch.
+- Persistence: `island_window` is an in-memory App field, never saved; the app always opens as the main window. `IslandState` lives on `App` (`app.island`).
+- Window sizing: `MiniWindow::wanted` uses `island::wanted_size(&app.island)`; resize commands are sent only between shapes (growing immediately, shrinking only after the morph/appear has landed).
+- Demo surfaces in `demo.rs`: `"island"` (strip), `"island-pill"` (`settle_pill`), `"island-open"` (`settle_open`). `settle_*` set `seen_at = f64::INFINITY` so the grace does not fold a settled state.
+- Tests: `app.rs`: `the_island_wakes_opens_and_goes_home`, `the_island_folds_when_its_sleeve_is_clicked`. `island.rs` unit tests: rate knob ends, geometry (78/189/96/156), tween turn-around, gather endpoints, late window, transport slide, mark blend, box scale about top-centre.
+- VPS renders verified the pill and the card, dark and light, matching the reference arrangement (files on vps1: `~/shots/island-pill.png`, `island-card.png`, `island-card-light.png`; local copies in `C:\Users\DELL\AppData\Local\Temp\opencode\glass-shots\`).
+
+### 3.7 Channel-balance evidence tooling
+- `worker::channel_balance` + `probe-audio`: the probe decodes ~3 s of the resolved stream and logs `Probe: channels left rms X, right rms Y over N ms` to the app log.
+- A fixture test proves AAC and Opus decode paths agree channel-for-channel (same-channel correlation above cross-channel, sane balance, quiet fixtures accepted). No decode-side imbalance found.
+- The user reported "left ear gets most of the music" once; it was never reproduced. If it returns: run `musify.exe probe-audio "creepin"` on the PC and read `%LOCALAPPDATA%\msedge-projects\musify\data\musify.log`. Also watch for `audio queue ran dry` stutter warnings (one 241 ms instance was seen on 2026-10-18 09:13:26).
+
+## 4. Verified state at handoff
+
+- VPS gates: run20 and run21 were fully green (check, clippy `-D warnings`, full test suite) on the island code. Latest run logs: `~/check-run21.out`, `check.log`/`clippy.log`/`test.log`.
+- Windows exe: built from `7473c3f` on vps1, md5 `EAEB1A21D3C2903058D246E0539A2255`, installed to `C:\Users\DELL\AppData\Local\Programs\Musify\musify.exe`, app relaunched with it (PID 7396 at install time; not running when this doc was written).
+- Backups in the same folder: `musify.exe.bak-a836909` (previous build), `.bak-e766ed9`, `.bak-f51e12d`, `.bak-90106ac`, `.bak-c8f1796`, `.bak-473d7dc-era`, plus many older `.bak-<sha>` from previous sessions.
+- PC settings (persisted): `%APPDATA%\msedge-projects\musify\config\settings.json` — `winamp_window=false`, `custom_titlebar=false`, `youtube_mode=true`, theme light, volume 19660. The user's display is 1366x768 at 100% DPI. Windows 10 build 18362 (no Mica).
+
+## 5. NEXT STEPS (prioritized)
+
+1. **The user has not yet reacted to the island.** As of this handoff they have not tried it. Expect feedback on:
+   - The wake strip: an 8 px always-on-top strip at the top-centre catches clicks there while minimized (they accepted this trade-off with variant B).
+   - Timing: `MORPH=50` → 460 ms morph, appear 0.32 s, fold graces 0.5 s (pill) / 0.7 s (card). All are constants at the top of `island.rs` plus `GRACE_S`/`CARD_GRACE_S`.
+   - Fidelity of the card: the restore button is the one addition; everything else follows the reference.
+   - They may want Ctrl+M to summon the island instead of the classic mini player, or the island to exist while the app is open. Both are easy follow-ups.
+2. **Stage 3 of the engine**: delete the mpv backend and the `MUSIFY_YT_PLAYER` escape once the user approves the native engine by ear. The spec's stage 3 also includes resource comparison against mpv and removing mpv-specific settings copy.
+3. **Live listening proof** on the PC (VPS IP cannot play YouTube: LOGIN_REQUIRED). If the user reports the left-ear thing again, use the probe above. Also ask about stutters if `audio queue ran dry` appears in the log.
+4. **Search panel rows**: if the user still finds the panel too short on a long list, the height math is in `widgets.rs::search_suggestions` (cap 0.62 * screen height).
+5. **Mica** stays dormant for Win11; nothing to do on their Win10 machine.
+
+## 6. Infrastructure: the VPS (vps1) — exact recipes
+
+- Machine: name `vps1`, InstaBox id `m_agquvtirvrxwrrsodr73nzpms4`, hostname `instabox-vps1`. API base `https://api.instabox.sh`. Key file `C:\Users\DELL\.instabox.key` (never print).
+- Useful endpoints (discovered via `GET /v1/openapi.json`): `POST /v1/machines/{id}/wake`, `POST /v1/machines/{id}/exec` (json `{"cmd":"..."}`, bash -lc, request times out but detached jobs survive), `GET /v1/machines/{id}` , `GET /v1/machines/{id}/connection-info`, `POST /v1/machines/{id}/ssh-tokens` (returns `ssh -p 2222 <token>@api.instabox.sh`, ttl up to 30 days), `GET /v1/machines/{id}/files?path=`.
+- SSH from the PC: only Git's OpenSSH works: `"C:\Program Files\Git\usr\bin\ssh.exe"`. Mint a fresh token via the API if the old one expired, then use `-p 2222 -o StrictHostKeyChecking=accept-new <token>@api.instabox.sh`. `scp.exe -O -P 2222` for files. Exec through the API also works and avoids tokens.
+- Machine auto-suspends after ~30 min idle. Wake and wait ~30-90 s; the API may answer `machine is still changing state` briefly (retry).
+- Box layout: checkout `~/musify`; the check script `~/musify-check.sh`; renders `~/shots`. Rust: `/opt/rust/rustup` toolchain 1.99.0 for check/test; `~/.rustup` holds 1.98.0 + the windows-msvc target for `cargo xwin`; `~/.cache/cargo-xwin` (~1.1 GB, keep). Disk `/data` is 20 GB and was ~3 GB free; the msvc target dir and debug incremental are the big consumers (delete `target/debug/incremental` when needed).
+- Gates: `~/musify-check.sh` fetches `origin/scratch/native-player`, checks out, then runs check, clippy `-D warnings`, and the full test suite with debuginfo off. Launch it detached and poll:
+  `grep -E 'check-ok|clippy-ok|test-ok|FAILED|EXIT:' ~/check-runN.out`.
+  Local copy of the script: `C:\Users\DELL\AppData\Local\Temp\opencode\remote-check.sh`.
+- Long scripts: base64 them and run over ssh:
+  `$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content script.sh -Raw))); ssh ... "echo $b64 | base64 -d | tr -d '\r' | bash"`.
+- Windows cross build (proven pattern; use exactly this shape):
 ```
+{"cmd":"cd ~/musify && setsid nohup bash -c 'export RUSTUP_HOME=\"$HOME/.rustup\"; export PATH=\"$HOME/.cargo/bin:/usr/lib/llvm-19/bin:$PATH\"; cd ~/musify && cargo xwin build --release --locked --no-default-features --target x86_64-pc-windows-msvc > ~/xwinN.log 2>&1; echo EXIT:$? >> ~/xwinN.log' < /dev/null > /dev/null 2>&1 & echo xwin-started"}
+```
+  Do not run this from an inline shell script with altered quoting: one attempt exported the wrong rustup and failed with "can't find crate for core; the x86_64-pc-windows-msvc target may not be installed". The tree must have been checked out first (fetch `origin/scratch/native-player`; the check script does it; the xwin command above relies on the current checkout).
+  Build takes ~2-4 minutes warm. Exe: `~/musify/target/x86_64-pc-windows-msvc/release/musify.exe` (~31 MB).
+- Renders (demo feature): on the box `cargo build --locked --no-default-features --features demo`, then
+  `LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1400x1100x24" ./target/debug/musify --demo-page home --demo-show "island-open,light" --demo-shot ~/shots/x.png`.
+  Demo surfaces include: `search`, `winamp`, `playlist`, `eq`, `island`, `island-pill`, `island-open`, `light`, `dark`, etc.
+  Gotcha: a check/test run can replace `target/debug/musify` with a non-demo binary; then the app exits 2 with "unexpected argument '--demo-page'". Rebuild with `--features demo` before shots.
+- Install on the PC: stop the app, `Move-Item musify.exe musify.exe.bak-<tag>`, copy the new exe, `Start-Process`, verify the PID and that `--version` prints `musify 0.13.2`. Compare MD5 from the box (`md5sum`) with `Get-FileHash -Algorithm MD5` locally before installing.
+- Screenshots of the live app on the PC: PowerShell with `System.Drawing` + `GetWindowRect` (collect the window rect, `CopyFromScreen`). Transparent windows composite properly on the user's PC, so the mini player/island show the desktop through.
 
-## Decisions already made (do not relitigate)
+## 7. Code map (the files that matter now)
 
-1. **Native, no-subprocess YouTube streaming is impossible.** Proven live from the user's IP: every InnerTube client profile (Android / Android VR / Android Music / iOS / Web / TV-embed / Web-embed) answered HTTP 400 or `LOGIN_REQUIRED` ("Sign in to confirm you're not a bot") — YouTube's playback attestation (PoToken) wall. yt-dlp is the resolver in every workable design; its upkeep is the yt-dlp community's job.
-2. **Architecture (user approved):** per track change, `yt-dlp` resolves a direct audio URL in flag-only mode (`-g`; no download, no ffmpeg); an **mpv child process** decodes/plays it, driven over mpv's JSON IPC (Windows named pipe). This is Spotube's architecture rebuilt inside Musify.
-3. **Engine placement:** a second engine (`src/player_yt.rs`, `YtEngine`) lives BESIDE the librespot engine (`Worker.yt` in `backend.rs`). Free accounts route to it; the Premium path is untouched. Free accounts' Web API browsing/search/playlists already work without any engine (verified in code) — only audio was gated.
-4. **The app never advances tracks** — librespot's Spirc does that today. The YtEngine must own queue advancement (mpv EOF → next item, push `LocalState` with `track_sequence+1`); the app's existing `on_now_playing_changed` then consumes queue rows exactly as for Premium. `docs/_reference/queue.md` is the contract.
-5. **Metadata flow:** the engine cannot resolve `spotify:track:` URIs itself (no Web tokens). `LoadSpec` gains `tracks: Vec<LocalTrack>`; `PlayerCommand::AddToQueue` becomes `AddToQueue { uri, track: Option<LocalTrack> }`. For items that still lack metadata when their turn comes (long playlists), **defer**: park the item (Loading + placeholder track) and add `PlayerCommand::SetTrackMetadata { uri, track }`; the app already fetches `ApiRequest::Track` for a newly playing uncached uri (app.rs ≈3074-3081, cache insert ≈7215) — in YT mode it forwards the fetched metadata to the engine, which then resolves and plays. (v1 fallback if needed: rely on `track_cache` only and error on missing metadata — playlists will be hit-or-miss; the deferred design is the correct one.)
-6. Adopted from upstream's `AGENTS.md` anyway: network/playback work on the runtime (never block the UI thread); focused changes; tests updated in the same change; honest platform-coverage claims.
-7. Do not touch either company's server-side gates: no Spotify credential forging, no YouTube attestation circumvention. yt-dlp + mpv act client-side against public streams; keep it that way.
+- `src/ui/island.rs` — the island. Geometry constants from the reference (`W=260`, `SHUT=78`, `OPEN=189`, `PAD=10`, sleeve 40→64, `CORNER=16`, `RAIL_Y=96`, `OPS_Y=156`, `LEAD=46`, `LIKE=30`), `Tween` (clock = egui input time in **seconds**), `IslandState` (visible, open, appear/morph/gather/mark/beat tweens, seen_at, placed, asked), `place_window`, `step` (hover/appear/fold state machine, resize policy, repaint requests), `open_card`/`close_card`, `box_rect`, `tap_rect`, `ops_rects`, `restore_rect`, `like_rect`, `paint` + paint_cover/words/track/transport/heart, `paint_mark`, `round_button`, `playtime`, unit tests.
+- `src/app.rs` — `island_window` + `island` fields; `frame_ui` minimize trigger and island branch (order: island, then winamp_window, then main); `Action::IslandToMain`; the search split (`run_typed_search` preview semantics, response preview branches, `run_search` clearing); island interaction tests; search split test; history tests.
+- `src/model.rs` — `SearchState` preview fields (`typed`, `suggestions`, `suggestions_playlists`); new `Action::IslandToMain`.
+- `src/ui/widgets.rs` — `search_suggestions` height (rows sum, cap 0.62 screen, `ui.set_height`).
+- `src/ui/topbar.rs` — pill; suggestion rows read `app.search.suggestions`; Enter/commit.
+- `src/entrypoint.rs` — `MiniWindow::wanted` (island branch first, then winamp mini), `clear_color` transparent for island/winamp, Mica/tint block skipping mini/island, staging, demo options.
+- `src/demo.rs` — island surfaces; search demo seeds suggestions.
+- `src/player_yt.rs` — engine actor, native + mpv (env switch), duration guard, prefetch, fades.
+- `src/yt_audio/{source,worker,decode}.rs` — playback source/worker/decoder; `channel_balance` probe helper; fixture channel-parity test.
+- `src/yt_resolver.rs` — quality ranking (141 > 251 > 140 > 250 > 249 > 139) and resolver.
+- `src/sink.rs` — `build_chain`, `SharedVolume`, `AudioControl`, chain config (the shared sink chain).
+- `src/window.rs` — DWM caption colour and Mica (Win11 only).
+- Deleted: `src/ui/glass.rs`. `src/ui/mod.rs` declares `pub mod island` in its place.
+- Branch `scratch/native-player` is a mirror of main for box checkouts (force-pushed whenever main moves).
 
-## Implementation summary (implemented in `b6d4466`; full detail in YT-ENGINE-PLAN.md)
+## 8. Recent commits (newest first, at handoff)
 
-- `Cargo.toml`: tokio features += `"process"` ("net" already covers Windows named pipes).
-- `src/lib.rs`: `pub mod player_yt;`.
-- `src/player.rs`: `LoadSpec.tracks`; new `AddToQueue { uri, track }` payload; add `Heard::from_state(Arc<Mutex<LocalState>>)` pub(crate) constructor (its field is private; the YT engine hands volume over with it).
-- NEW `src/player_yt.rs`: `YtEngine` mirroring `Engine`'s surface (connect / command / shutdown / device_id / heard / interrupted / resume_point / resume; Toggle, Next, Previous, Seek, Volume, VolumePreview, Shuffle, Repeat, AddToQueue, ClearQueue, Load; Transfer = no-op). Internals: spawn mpv (`--idle=yes --no-video --no-terminal --really-quiet --input-ipc-server=\\.\pipe\musify-<pid> --ytdl=no --volume=N`), connect the tokio named pipe, observe `time-pos` / `duration` / `pause`, handle `end-file` reasons (`eof` → advance; `error` → error state), guard double-advance, no seek when duration is 0. Volume: `u16` ↔ mpv percent = `v * 100 / 65535`. Resolve command: `yt-dlp --ignore-config --no-warnings --no-playlist --default-search ytsearch -f "bestaudio[ext=m4a]/bestaudio/best" -g -- "<title> <artists>"`, 30 s timeout, first stdout line. Tool discovery: PATH + known Windows fallbacks (`%LOCALAPPDATA%\Programs\mpv\mpv.exe`; `%LOCALAPPDATA%\Programs\Python\*\Scripts\yt-dlp.exe`).
-- `src/backend.rs` (line refs in the plan): `Worker.yt` field/init; `Command::YtEngineConnected` + handler; `Command::Player` routes to `yt` when `engine` is None; `start_yt_engine()` sibling of `connect_engine` (no browser, no grant; emits Connecting → Ready{device_id} / Failed); `authorize_playback` free branch → `start_yt_engine()`; `resume_engine` free branch → `start_yt_engine()`; `take_engine_for_resume` captures `yt.resume_point()`; `sign_out` and run-exit take `yt` down; NetworkStatus condition includes `yt`. Keep the hard gate at backend.rs:3306 (librespot 0.8 `exit(1)`s on free accounts — never call `Engine::connect` for free).
-- `src/app.rs`: `yt_playback: bool` flag (set where `ApiResponse::Me` reads `product` ≈5788-5801; suppress `Dialog::PremiumNeeded` for free); `Action::EnablePlayback` (≈10445) unifies: set `settings.playback_authorized` + send `Command::AuthorizePlayback` (the backend decides tier); `local_load` (≈11859) becomes a method: in YT mode materialize context loads via `context_track_uris` (≈7815) and fill `tracks` from `track_cache`; skip `autoplay_seed` (≈11892) in YT mode; queue paths (≈3028, 8838, 8888, 8916) use the new payload and `PlayerCommand` (not the Web API) in YT mode; update the free-account dialog test (≈25577 — it encodes the old blocking behavior).
+```
+7473c3f Be born the size the island already is
+ed4aa22 Settle the pill for a screenshot too
+60b9fc2 Close the braces the probes left open
+54df8b4 Count the morph in seconds, not milliseconds
+9f2112b Probe the island's state machine
+afdbdf8 Probe the island transport's entry
+b251412 Probe the island's way-home click
+2633872 Measure the words before drawing them, and quiet the leftovers
+1cb23d5 Trade the mini player for the island at the top of the screen
+7103474 Grow the suggestions panel to its rows on the frame they arrive
+6bc882b Let the headless frames drop their texture deltas
+8482641 Expose the rows the tests click through
+67b95e5 Press the glass buttons, not the window
+fb79e58 Prove the glass player's controls by clicking them
+e766ed9 Let the mini player show the desktop, float, and lead home
+f51e12d Float the panel in its window with room for its edge
+```
+(The probe commits are leftovers in history but their probes were removed; the tree is clean of eprintln probes except none. The glass commits' module was deleted in `1cb23d5`.)
 
-## Environment setup on the new machine (for testing the built exe)
+## 9. Gotchas and lessons (hard-won, do not relearn)
 
-- gh CLI, authenticated as `msedge-projects` (`repo` + `workflow` scopes).
-- `pip install yt-dlp` (or a release binary).
-- mpv: `winget install shinchiro.mpv` fails on UAC in unattended shells (exit 2). Working method: download `mpv-x86_64-*.7z` from github.com/shinchiro/mpv-winbuild-cmake/releases, extract to `%LOCALAPPDATA%\Programs\mpv\` (`tar -xf` cannot read .7z — fetch `7zr.exe` from 7-zip.org, or use 7-Zip).
-- Rust toolchain: **not** needed locally unless the machine is strong (heavy dependency tree; CI is the compiler). If installed anyway: repo pins 1.98.0 via `rust-toolchain.toml`, fetched automatically.
-- `.cargo/config.toml` sets `+crt-static` for MSVC — the CI exe is self-contained (no VC++ redistributable needed).
+- **egui press stealing**: a full-background widget with `Sense::drag()` is marked dragged the instant any press lands inside it, even on a button above it. That press then becomes a window move (StartDrag) and the button's click never completes. Any drag background must use `Sense::click_and_drag()`, which postpones the decision until the pointer really moves. This was the "buttons don't work" bug in the old glass mini player.
+- **Headless tests**: `ctx.run_ui(RawInput { screen_rect, time, events }, |ui| app.frame_ui(ui))`; clear `output.textures_delta` before dropping a FullOutput or epaint panics ("Dropped TexturesDelta with unapplied deltas"). Clicks: move frame, press frame, release frame; the click fires on the release frame.
+- **Island tween clock**: `Tween.dur` is in **seconds** (egui input time). `BASE_MS=460` must be divided by 1000. A unit bug here made the card morph over 460 seconds and broke the tests in a subtle way (p stayed ~0.006).
+- `Tween::retarget` is a no-op when the target is unchanged (so `settle_*`/open states do not restart), and it reads its current value for continuous turn-around. `replay` (heart beat) starts from zero each time.
+- `settle_open`/`settle_pill` set `seen_at = f64::INFINITY`; otherwise the grace folds a settled card on the first frame.
+- Overlapping widgets: later `ui.interact` calls win. Register the tap/background first, controls after.
+- Windows 10 on the user's PC: no Mica. The caption tint is the fallback. `custom_titlebar` works there but was reverted by the user.
+- Their screenshots are often crops; a transparent app window shows the desktop through, so a dark region inside the window bounds may just be the wallpaper/app behind, not a paint bug. Capture the full screen or the window rect before concluding.
+- `musify.log` is replaced at every app start (`%LOCALAPPDATA%\msedge-projects\musify\data\musify.log`); read it soon after a session or ask the user to reproduce.
+- The VPS IP cannot play YouTube (LOGIN_REQUIRED). Live playback tests must happen on the PC; the VPS is for gates and renders.
+- `git` warns about LF→CRLF on commit; that is normal (`core.autocrlf=true`). Pushes use the fork remote only.
+- InstaBox exec API: transient request failures happen; retry. When the machine is resuming, the API returns `operation_conflict`; wait and retry. Detached jobs need `setsid nohup ... < /dev/null > /dev/null 2>&1 &` and are verified by tailing their log files over ssh.
 
-## Gotchas (hard-won)
+## 10. Quick reference: the user's last known state and what to ask
 
-- PowerShell 5.1 harness quirks: `[System.Net.Http.*]` types are not loaded (use `Invoke-RestMethod` / `Invoke-WebRequest`); `C:\Windows\system32\winget` is a broken alias in pipelines — call `%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe` directly or `cmd /c winget`.
-- `git status` / `gh` can block for a minute or more while other heavy processes run — use generous timeouts.
-- `cargo` commands share one target-dir lock: never run two cargo commands in the checkout at once (a background `cargo test` makes a foreground `cargo check` time out waiting).
-- Local builds want the CI's system packages on Linux: `libasound2-dev libpulse-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev cmake libclang-dev` (plus `ruby` for `packaging/test-launchers.py`).
-- The Packaging workflow is manual-only now: it needs published release assets, and this fork has none. The launcher regressions in `ci.yml` are the per-push checks.
-- Public repo = free Actions minutes; artifacts expire (default 90 days); every push rebuilds.
+- The app was last installed with the island build and opened for them; they have not confirmed whether they tried it.
+- Ask/confirm when they return: how the island feels (wake, slide-in, open, fold timings), whether the awake strip position/top-centre placement is right, whether they want Ctrl+M to summon the island instead of the classic player, and whether the restore button (right end of the transport row) or Escape as the way home is acceptable.
+- If they confirm the engine by ear, proceed to stage 3 (remove mpv paths and `MUSIFY_YT_PLAYER`).
+- If they report the left-ear imbalance again, use `musify.exe probe-audio "<song>"` and read the log line `Probe: channels left rms ..., right rms ...`.
 
-## Next steps (in order)
+---
 
-1. Fetch the artifact from the green `build` run:
-   `gh run download <id> --repo msedge-projects/spotifast-yt --name musify-windows-x64`
-2. On the Windows test machine (yt-dlp + mpv installed, see above): run
-   `musify.exe`, sign in with the free account, open Settings → playback
-   ("Free accounts play through YouTube…"), press Enable playback here, then
-   test a single song, an album, a playlist; next/previous/seek/volume;
-   end-of-track advance; adding to the queue and playing Next; and that a
-   Premium login still uses librespot.
-3. Report honestly what was run vs what only compiled.
-
-## User context
-
-Terse operator; wants speed and results ("do it", "spawn multiple agents"). Low-end hardware (i3-4150, 2C/4T) — keep local work light, prefer CI. Casual English, typos common. Bring evidence (measurements, test outputs) when closing a route; "impossible" needs proof — the InnerTube test results and CPU measurements above are that proof, reuse them.
+End of handoff. The handoff file itself is untracked in the repo root (`HANDOFF.md`); delete or move it freely, nothing depends on it.
