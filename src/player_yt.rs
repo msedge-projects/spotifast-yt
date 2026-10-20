@@ -565,7 +565,8 @@ impl Actor {
             let mime = cached.mime.clone();
             let length = cached.content_length;
             self.awaiting = false;
-            self.native.load(&url, length, mime.as_deref(), position_ms, fade, id);
+            self.native
+                .load(&url, length, mime.as_deref(), position_ms, fade, id);
             return;
         }
         self.awaiting = true;

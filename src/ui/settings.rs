@@ -478,10 +478,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         crate::backend::LocalPlayback::Ready { .. } => (
             pgettext(locale, "playback status", "Ready"),
             if app.yt_playback {
-                gettext(
-                    locale,
-                    "This computer plays through YouTube (yt-dlp).",
-                )
+                gettext(locale, "This computer plays through YouTube (yt-dlp).")
             } else {
                 gettext(locale, "This computer is a Spotify Connect device.")
             },
