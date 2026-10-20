@@ -44,6 +44,9 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(30);
 /// reports about once a second; half a second keeps the bar smooth without
 /// repainting the UI for every packet the worker reports.
 const POSITION_NOTIFY_MS: u32 = 500;
+/// A length the stream header states that is this far from the video's own
+/// length is the first fragment's, not the song's, and is never kept.
+const LENGTH_MISMATCH_MS: u32 = 5_000;
 /// A Previous press within this of the start restarts the track instead of
 /// moving to the one before it, like librespot.
 const PREVIOUS_RESTART_MS: u32 = 3_000;
@@ -298,6 +301,7 @@ struct CachedStream {
     ttl: Duration,
     mime: Option<String>,
     content_length: Option<u64>,
+    duration_ms: u64,
 }
 
 /// The in-process backend: the worker thread and the level its chain
@@ -564,7 +568,9 @@ impl Actor {
             let url = cached.url.clone();
             let mime = cached.mime.clone();
             let length = cached.content_length;
+            let duration_ms = cached.duration_ms;
             self.awaiting = false;
+            self.adopt_duration(&entry.uri, duration_ms);
             self.native
                 .load(&url, length, mime.as_deref(), position_ms, fade, id);
             return;
@@ -582,7 +588,11 @@ impl Actor {
                 .await
                 .map_err(|error| format!("{error:#}"));
             match &result {
-                Ok(_) => log::info!("YouTube: resolved in {} ms", started.elapsed().as_millis()),
+                Ok(stream) => log::info!(
+                    "YouTube: resolved in {} ms ({} s long)",
+                    started.elapsed().as_millis(),
+                    stream.duration_ms / 1000
+                ),
                 Err(error) => log::warn!("YouTube: resolve failed: {error}"),
             }
             let _ = messages.send(Message::Resolved { id, result });
@@ -597,8 +607,8 @@ impl Actor {
         match result {
             Ok(stream) => {
                 self.resolve_failures = 0;
-                let uri = self.current.as_ref().map(|entry| entry.uri.clone());
-                if let Some(uri) = uri {
+                if let Some(uri) = self.current.as_ref().map(|entry| entry.uri.clone()) {
+                    self.adopt_duration(&uri, stream.duration_ms);
                     self.store_url(uri, &stream);
                 }
                 let position_ms = self.target_ms;
@@ -661,8 +671,53 @@ impl Actor {
                 ttl: stream.ttl,
                 mime: stream.mime.clone(),
                 content_length: stream.content_length,
+                duration_ms: stream.duration_ms,
             },
         );
+    }
+
+    /// Takes the resolved stream's length for the row that is about to
+    /// play. A `yt:` row names its video, so that video's own length is
+    /// the row's length; any other row keeps the metadata's length and
+    /// only takes one when it arrived without any. The container's header
+    /// is never the source: it describes the first fragment of a YouTube
+    /// stream, not the song.
+    fn adopt_duration(&mut self, uri: &str, known_ms: u64) {
+        let named_video = uri.starts_with("yt:");
+        for entry in self.manual.iter_mut().chain(self.list.iter_mut()) {
+            if entry.uri == uri
+                && let Some(duration_ms) =
+                    adopts_length(named_video, entry.track.duration_ms, known_ms)
+            {
+                entry.track.duration_ms = duration_ms;
+            }
+        }
+        if let Some(current) = self.current.as_mut()
+            && current.uri == uri
+            && let Some(duration_ms) =
+                adopts_length(named_video, current.track.duration_ms, known_ms)
+        {
+            current.track.duration_ms = duration_ms;
+        }
+        let changed = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            match state.track.as_mut() {
+                Some(track) if track.uri == uri => {
+                    let adopted = adopts_length(named_video, track.duration_ms, known_ms);
+                    if let Some(duration_ms) = adopted {
+                        track.duration_ms = duration_ms;
+                    }
+                    adopted.is_some()
+                }
+                _ => false,
+            }
+        };
+        if changed {
+            self.publish();
+        }
     }
 
     /// A background resolve finished: the URL waits in the cache for the
@@ -672,6 +727,9 @@ impl Actor {
             self.prefetching = None;
         }
         if let Ok(stream) = result {
+            // The song may already be the current one (a warm resolve that
+            // answered late), so its length is worth taking here too.
+            self.adopt_duration(&uri, stream.duration_ms);
             self.store_url(uri, &stream);
         }
     }
@@ -1047,20 +1105,35 @@ impl Actor {
                     .duration_ms
                     .map(|ms| ms.min(u64::from(u32::MAX)) as u32)
                     .filter(|duration| *duration > 0);
-                if let Some(duration) = duration {
-                    let changed = {
+                if let Some(header) = duration {
+                    let (changed, mismatch) = {
                         let mut state = self
                             .state
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
                         match state.track.as_mut() {
+                            // With no length from the resolve, the header is
+                            // all there is: the only case that may feed it.
                             Some(track) if track.duration_ms == 0 => {
-                                track.duration_ms = duration;
-                                true
+                                track.duration_ms = header;
+                                (true, None)
                             }
-                            _ => false,
+                            // Otherwise the header is the first fragment's
+                            // length, even when it arrives as a fraction of
+                            // the song.
+                            Some(track)
+                                if track.duration_ms.abs_diff(header) > LENGTH_MISMATCH_MS =>
+                            {
+                                (false, Some((track.duration_ms, track.title.clone())))
+                            }
+                            _ => (false, None),
                         }
                     };
+                    if let Some((known, title)) = mismatch {
+                        log::warn!(
+                            "YouTube: the stream header says {header} ms but {title} is {known} ms; keeping the song's length"
+                        );
+                    }
                     if changed {
                         self.publish();
                     }
@@ -1134,6 +1207,18 @@ impl Actor {
     fn silence(&mut self) {
         self.native.worker.send(AudioCommand::Shutdown);
     }
+}
+
+/// The length to take from a resolved stream for a row, or `None` when the
+/// row's own length should stand. A `yt:` row names its video, so the
+/// video's length always wins there; any other row only takes one when it
+/// has none, the way librespot's metadata does.
+fn adopts_length(named_video: bool, current_ms: u32, known_ms: u64) -> Option<u32> {
+    let known_ms = u32::try_from(known_ms).unwrap_or(u32::MAX);
+    if known_ms == 0 || known_ms == current_ms || (!named_video && current_ms != 0) {
+        return None;
+    }
+    Some(known_ms)
 }
 
 /// The context position that follows `cursor`, or `None` when the list is
@@ -1320,6 +1405,23 @@ async fn resolve_yt_dlp(yt_dlp: &Path, query: &str) -> Result<yt_resolver::Resol
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `yt:` row names the video that plays, so that video's own length
+    /// is the row's length, whatever the row carried before.
+    #[test]
+    fn a_named_video_sets_its_own_length_over_the_row() {
+        assert_eq!(adopts_length(true, 6_000, 239_000), Some(239_000));
+        assert_eq!(adopts_length(true, 0, 239_000), Some(239_000));
+        assert_eq!(adopts_length(true, 239_000, 239_000), None);
+        assert_eq!(adopts_length(true, 239_000, 0), None, "no length to take");
+    }
+
+    #[test]
+    fn a_metadata_row_keeps_the_length_it_has() {
+        assert_eq!(adopts_length(false, 0, 239_000), Some(239_000));
+        assert_eq!(adopts_length(false, 200_000, 239_000), None);
+        assert_eq!(adopts_length(false, 200_000, 0), None);
+    }
 
     #[test]
     fn an_entry_without_metadata_waits_for_it() {

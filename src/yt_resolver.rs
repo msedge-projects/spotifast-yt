@@ -31,6 +31,10 @@ pub(crate) struct Resolved {
     pub mime: Option<String>,
     /// The stream's byte length when known.
     pub content_length: Option<u64>,
+    /// The video's own length when the player response states it. The
+    /// container's header describes only the first fragment of a YouTube
+    /// stream, so this is the length a progress bar can trust.
+    pub duration_ms: u64,
     /// The next-best candidates, best first, for a stream this engine
     /// cannot open (each carries no fallbacks of its own).
     pub fallbacks: Vec<Resolved>,
@@ -1295,6 +1299,7 @@ fn pick_audio(response: &Value) -> Option<Resolved> {
                 .and_then(Value::as_str)
                 .map(str::to_string),
             content_length: format.get("contentLength").and_then(number),
+            duration_ms: duration_seconds.saturating_mul(1000),
             fallbacks: Vec::new(),
         })
     };
@@ -1386,6 +1391,7 @@ impl Resolved {
         Self {
             mime: url_query(&url, "mime"),
             content_length: url_query(&url, "clen").and_then(|value| value.parse().ok()),
+            duration_ms: 0,
             fallbacks: Vec::new(),
             url,
             ttl,
@@ -1467,6 +1473,10 @@ mod tests {
         let stream = pick_audio(&response).expect("a stream");
         assert!(stream.url.ends_with("/251"), "{}", stream.url);
         assert_eq!(stream.mime.as_deref(), Some("audio/webm; codecs=\"opus\""));
+        assert_eq!(
+            stream.duration_ms, 200_000,
+            "the video's own length travels with the stream"
+        );
         let fallbacks: Vec<&str> = stream
             .fallbacks
             .iter()
@@ -1529,6 +1539,7 @@ mod tests {
         );
         assert_eq!(stream.mime.as_deref(), Some("audio/webm"));
         assert_eq!(stream.content_length, Some(9_730_538));
+        assert_eq!(stream.duration_ms, 0, "a bare URL states no length");
         assert!(stream.fallbacks.is_empty());
     }
 
