@@ -88,6 +88,13 @@ fn window_size_for(visible: bool, open: bool) -> Vec2 {
     }
 }
 
+/// Whether the window has grown enough to hold the pill. Until it has, the
+/// pill's pane is taller than the window and would be clipped at the
+/// bottom, which read as a cut-off shape while it slid in.
+fn has_pill_room(window_height: f32) -> bool {
+    window_height >= PILL_SIZE.y - 0.5
+}
+
 /// The size the window should be born with, for whoever creates it.
 pub fn wanted_size(state: &IslandState) -> Vec2 {
     window_size_for(state.visible, state.open)
@@ -300,6 +307,11 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     }
     if !app.island.visible && hovered {
         app.island.visible = true;
+    }
+    // The window grows before the pill may slide in: drawing a 78-point
+    // pane into the resting strip's 8-point window clipped its sides while
+    // the resize was still on its way.
+    if app.island.visible && app.island.appear.to < 1.0 && has_pill_room(window.height()) {
         app.island.appear.retarget(1.0, 0.32, Ease::Quart, now);
     }
 
@@ -446,9 +458,9 @@ fn paint(app: &mut App, ui: &mut Ui, window: Rect, now: f64) {
         Color32::from_black_alpha(18)
     };
     let pane = if palette.dark {
-        Color32::from_rgba_unmultiplied(22, 24, 28, 236)
+        Color32::from_rgb(22, 24, 28)
     } else {
-        Color32::from_rgba_unmultiplied(250, 250, 250, 232)
+        Color32::from_rgb(250, 250, 250)
     };
     let fade = |c: Color32| c.gamma_multiply(clamp01(appear));
 
@@ -785,6 +797,14 @@ mod tests {
         assert!((rate(50.0) - 1.0).abs() < 1e-6, "50 is the tuned 460 ms");
         assert!((rate(0.0) - 1.6).abs() < 1e-6);
         assert!((rate(100.0) - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_pill_waits_for_a_window_tall_enough_to_hold_it() {
+        // The strip's own window would clip a pill drawn into it.
+        assert!(!has_pill_room(RESTING_SIZE.y));
+        assert!(!has_pill_room(PILL_SIZE.y - 1.0));
+        assert!(has_pill_room(PILL_SIZE.y));
     }
 
     #[test]
