@@ -310,8 +310,10 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     }
     // The window grows before the pill may slide in: drawing a 78-point
     // pane into the resting strip's 8-point window clipped its sides while
-    // the resize was still on its way.
-    if app.island.visible && app.island.appear.to < 1.0 && has_pill_room(window.height()) {
+    // the resize was still on its way. Only a pointer that is still there
+    // starts the slide, so a fold is never restarted by this.
+    if hovered && app.island.visible && app.island.appear.to < 1.0 && has_pill_room(window.height())
+    {
         app.island.appear.retarget(1.0, 0.32, Ease::Quart, now);
     }
 
