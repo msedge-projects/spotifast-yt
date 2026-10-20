@@ -11679,6 +11679,12 @@ impl App {
 impl App {
     /// Runs background work with or without a main window.
     pub fn background_frame(&mut self, ctx: &egui::Context) {
+        // The island takes over here, not in the drawing: eframe paints
+        // nothing for a minimized window and runs only this logic, so a
+        // hand-over checked while drawing never happened.
+        if self.hand_over_to_island(ctx) {
+            return;
+        }
         if self.autoscroll.cancel_if_unfocused(ctx) {
             self.scrolling.stop();
         }
@@ -11708,6 +11714,27 @@ impl App {
         let close_requested = ctx.input(|input| input.viewport().close_requested());
         self.note_close_request(close_requested, self.hides_to_tray());
         self.schedule_next_pass(ctx);
+    }
+
+    /// Hands the screen to the island when the main window is minimized.
+    ///
+    /// This is called from the logic pass, which is the one eframe still
+    /// runs for a minimized window: it paints nothing there, so the
+    /// hand-over cannot live in the drawing. Returns true when the
+    /// hand-over started, so the pass can end there.
+    fn hand_over_to_island(&mut self, ctx: &egui::Context) -> bool {
+        // Only the main window hands over: the island itself is already
+        // there, and a minimized Winamp player stays a Winamp player.
+        if self.island_window || self.switch_intent || self.settings.winamp_window {
+            return false;
+        }
+        if ctx.input(|input| input.viewport().minimized != Some(true)) {
+            return false;
+        }
+        self.island_window = true;
+        self.switch_intent = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        true
     }
 
     /// Closing the window keeps the process running in the tray when the
@@ -11998,11 +12025,7 @@ impl App {
         }
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
-        // A minimized main window hands the screen to the island.
-        if !self.island_window && ctx.input(|input| input.viewport().minimized == Some(true)) {
-            self.island_window = true;
-            self.switch_intent = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        if self.hand_over_to_island(ctx) {
             return;
         }
         self.pixels_per_point = ctx.pixels_per_point();
@@ -13660,6 +13683,35 @@ mod tests {
             pressed,
             modifiers: egui::Modifiers::NONE,
         }
+    }
+
+    /// eframe paints nothing for a minimized window and runs only the
+    /// logic, so the hand-over has to happen there. The check that used to
+    /// live in the drawing never ran, and the island never appeared.
+    #[test]
+    fn a_minimized_window_hands_over_in_the_logic_pass() {
+        let ctx = egui::Context::default();
+        let mut app = test_app("island-minimized");
+        app.attach(&ctx);
+        let input = egui::RawInput {
+            viewports: std::collections::HashMap::from([(
+                egui::ViewportId::ROOT,
+                egui::ViewportInfo {
+                    minimized: Some(true),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let output = ctx.run_logic(&input, |ctx| app.background_frame(ctx));
+        assert!(app.island_window, "the island takes over");
+        assert!(app.switch_intent, "and replaces the window");
+        let closed = output
+            .viewport_commands
+            .get(&egui::ViewportId::ROOT)
+            .is_some_and(|commands| commands.contains(&egui::ViewportCommand::Close));
+        assert!(closed, "the main window closes for the island");
+        app.backend.shutdown();
     }
 
     /// The island wakes on hover, opens on a click, and its way-home
