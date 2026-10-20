@@ -1,7 +1,9 @@
 # Musify's own YouTube player: in-process playback engine
 
 Date: 2026-10-18. Status: approved in chat; this document is the input to the
-implementation plan. Repository: the `msedge-projects/spotifast-yt` fork.
+implementation plan. Stage 3 (deleting the mpv backend) landed on 2026-10-20,
+so the removal planned here is complete. Repository: the
+`msedge-projects/spotifast-yt` fork.
 
 ## 1. Goal
 

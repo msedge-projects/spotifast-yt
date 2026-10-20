@@ -4104,8 +4104,8 @@ impl Worker {
         }
     }
 
-    /// Brings up the free-account YouTube engine. It needs no grant: mpv
-    /// and yt-dlp are found on the machine and the engine starts idle.
+    /// Brings up the free-account YouTube engine. It needs no grant: yt-dlp
+    /// is found on the machine and the engine starts idle.
     fn start_yt_engine(&mut self) {
         if self.engine_busy {
             return;
@@ -4116,7 +4116,7 @@ impl Worker {
         if !self.engine_retry_quiet {
             self.emit(Event::Playback(LocalPlayback::Connecting));
         }
-        log::info!("starting the YouTube playback engine (mpv + yt-dlp)");
+        log::info!("starting the YouTube playback engine (in-process audio, yt-dlp fallback)");
         let config = self.engine_config.clone();
         let notify = self.yt_notify();
         let commands = self.commands.clone();

@@ -4,7 +4,7 @@
 //! sends and checks what comes back: the connect handshake, a two-song
 //! load, the playing state, a seek, a volume set, pause and resume, the
 //! end-of-song advance to the second entry, and a queued song playing on
-//! Next. It needs `mpv` and `yt-dlp` where the engine finds them.
+//! Next. It needs `yt-dlp` where the engine finds it.
 //!
 //! With a real yt-dlp the probe resolves (and plays) two real songs:
 //!
@@ -17,7 +17,7 @@
 //! song length the probe expects:
 //!
 //! ```text
-//! PATH=/path/to/stub/bin:$PATH MPV_HOME=/tmp/mpv-null cargo run --example yt_probe
+//! PATH=/path/to/stub/bin:$PATH cargo run --example yt_probe
 //! ```
 //!
 //! Environment: `MUSIFY_YT_PROBE_TITLE_A` / `_B` change the search titles

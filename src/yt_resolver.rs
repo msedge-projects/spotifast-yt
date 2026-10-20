@@ -207,8 +207,8 @@ pub struct MusicSearch {
 /// How long a URL without an `expire` parameter is assumed good for.
 const ASSUMED_URL_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// Taken off the URL's own expiry, so a cached URL is never handed to mpv
-/// while it is about to die.
+/// Taken off the URL's own expiry, so a cached URL is never handed to the
+/// worker while it is about to die.
 const EXPIRE_MARGIN: Duration = Duration::from_secs(5 * 60);
 
 /// A sanity cap on reported lifetimes (about as long as a URL ever lives).

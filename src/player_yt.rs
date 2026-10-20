@@ -1,13 +1,14 @@
-//! Free-account playback through YouTube's InnerTube API and mpv.
+//! Free-account playback through YouTube's InnerTube API.
 //!
 //! Spotify does not hand a free account the audio keys librespot needs, so
 //! this engine resolves each track's title to a direct audio URL: first
 //! through the InnerTube API impersonating the VISIONOS client (two HTTPS
 //! requests from this process, no JavaScript, no subprocess), and, when
 //! that is refused, through `yt-dlp` (a flag-only `-g` call: no download,
-//! no ffmpeg) as before. The URL plays through an `mpv` child process
-//! driven over mpv's JSON IPC. It lives beside the librespot engine:
-//! Premium accounts keep `player.rs`, free accounts get this one.
+//! no ffmpeg) as before. The URL plays through this process's own decoder
+//! and audio chain, with no player child process. It lives beside the
+//! librespot engine: Premium accounts keep `player.rs`, free accounts get
+//! this one.
 //!
 //! Resolved URLs are kept for as long as their own lifetime allows, and
 //! the next song is resolved while the current one plays, so starting a
@@ -27,8 +28,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
-use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::player::{
@@ -41,11 +40,9 @@ use crate::yt_resolver;
 
 /// How long the yt-dlp fallback resolve may take before it is killed.
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long mpv has to create its IPC pipe after the process starts.
-const IPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 /// How often the played position is pushed to the interface. librespot
 /// reports about once a second; half a second keeps the bar smooth without
-/// repainting the UI for every mpv tick.
+/// repainting the UI for every packet the worker reports.
 const POSITION_NOTIFY_MS: u32 = 500;
 /// A Previous press within this of the start restarts the track instead of
 /// moving to the one before it, like librespot.
@@ -54,31 +51,10 @@ const PREVIOUS_RESTART_MS: u32 = 3_000;
 /// keeps a resolve clear of the transition between songs.
 const PREFETCH_DELAY: Duration = Duration::from_secs(10);
 
-/// Which playback backend this session runs: the app's own in-process
-/// engine is the default, and `MUSIFY_YT_PLAYER=mpv` selects the child
-/// process kept for the transition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BackendChoice {
-    Native,
-    Mpv,
-}
-
-fn backend_from(value: Option<&str>) -> BackendChoice {
-    match value {
-        Some(value) if value.eq_ignore_ascii_case("mpv") => BackendChoice::Mpv,
-        _ => BackendChoice::Native,
-    }
-}
-
-fn chosen_backend() -> BackendChoice {
-    backend_from(std::env::var("MUSIFY_YT_PLAYER").ok().as_deref())
-}
-
-/// The engine's actor messages: commands from the interface, mpv's events,
-/// finished resolves, and the end of the pipe.
+/// The engine's actor messages: commands from the interface, finished
+/// resolves, and shutdown.
 enum Message {
     Command(PlayerCommand),
-    Mpv(Value),
     Resolved {
         id: u64,
         result: Result<yt_resolver::Resolved, String>,
@@ -90,30 +66,21 @@ enum Message {
     },
     /// Takes the in-process engine down with the rest.
     Shutdown,
-    Closed,
 }
-
-/// Either platform's IPC connection: one trait so the reader and writer
-/// tasks do not care which one it is.
-trait IpcStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
-impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> IpcStream for T {}
-
-type BoxedIpc = Box<dyn IpcStream>;
 
 pub struct YtEngine {
     device_id: String,
     state: Arc<Mutex<LocalState>>,
     messages: mpsc::UnboundedSender<Message>,
-    child: Mutex<Option<tokio::process::Child>>,
-    /// What was playing when mpv went away, for the engine that replaces
-    /// this one.
+    /// What was playing when the engine went away, for the engine that
+    /// replaces this one.
     interrupted: Arc<Mutex<Option<Interrupted>>>,
     shutting_down: Arc<AtomicBool>,
 }
 
 impl YtEngine {
-    /// Starts mpv and connects to its control pipe. Fails when yt-dlp or
-    /// mpv is missing, so the interface can say what to install.
+    /// Starts the in-process engine and the resolver. Fails when yt-dlp is
+    /// missing, so the interface can say what to install.
     pub async fn connect(config: &EngineConfig, notify: Notify) -> Result<Self> {
         let yt_dlp = find_tool("yt-dlp").ok_or_else(|| {
             anyhow!(
@@ -129,101 +96,54 @@ impl YtEngine {
             ..LocalState::default()
         }));
         let (messages, receiver) = mpsc::unbounded_channel();
-        let (mpv_lines, mpv_receiver) = mpsc::unbounded_channel();
         let interrupted: Arc<Mutex<Option<Interrupted>>> = Arc::default();
         let shutting_down = Arc::new(AtomicBool::new(false));
 
-        // Two backends: the app's own engine (the default) and mpv, kept
-        // for the transition behind `MUSIFY_YT_PLAYER=mpv`.
-        let (child, native, audio) = match chosen_backend() {
-            BackendChoice::Mpv => {
-                let mpv = find_tool("mpv").ok_or_else(|| {
-                    anyhow!(
-                        "YouTube playback needs mpv. Install mpv and make sure mpv.exe is on \
-                         PATH or in %LOCALAPPDATA%\\Programs\\mpv."
-                    )
-                })?;
-                let pipe = ipc_path();
-                #[cfg(not(windows))]
-                let _ = std::fs::remove_file(&pipe);
-                let mut command = tokio::process::Command::new(&mpv);
-                command
-                    .arg("--idle=yes")
-                    .arg("--no-video")
-                    .arg("--no-terminal")
-                    .arg("--really-quiet")
-                    .arg(format!("--input-ipc-server={}", pipe.display()))
-                    .arg("--ytdl=no")
-                    // A stalled stream fails in twenty seconds instead of
-                    // a minute, and short drops reconnect instead of
-                    // ending the track: both give the retry a healthy
-                    // baseline to resume.
-                    .arg("--network-timeout=20")
-                    .arg("--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5")
-                    .arg(format!(
-                        "--volume={}",
-                        volume_percent(config.initial_volume)
-                    ))
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .kill_on_drop(true);
-                let child = command.spawn().context("unable to start mpv")?;
-                let stream = connect_ipc(&pipe).await?;
-                let (reader, writer) = tokio::io::split(stream);
-                tokio::spawn(run_writer(writer, mpv_receiver));
-                tokio::spawn(run_reader(reader, messages.clone()));
-                (Some(child), None, None)
-            }
-            BackendChoice::Native => {
-                let control = AudioControl::new(config.buffer_ms);
-                let volume = SharedVolume::new(config.initial_volume);
-                let (audio_tx, audio_rx) = mpsc::unbounded_channel();
-                let device = config.audio_device.clone();
-                let buffer_ms = config.buffer_ms;
-                let tap = Arc::clone(&config.tap);
-                let eq = Arc::clone(&config.eq);
-                let chain_control = Arc::clone(&control);
-                let chain_volume = volume.clone();
-                let normalisation = Arc::new(AtomicU64::new(1.0f64.to_bits()));
-                let error_state = Arc::clone(&state);
-                let error_notify = Arc::clone(&notify);
-                let on_error: ErrorHook = Arc::new(move |message: String| {
-                    let snapshot = {
-                        let mut current = error_state
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        current.error = Some(message);
-                        current.clone()
-                    };
-                    (error_notify)(EngineEvent::State(snapshot));
-                });
-                let worker = Worker::spawn(
-                    move || {
-                        build_chain(ChainConfig {
-                            device,
-                            buffer_ms,
-                            control: chain_control,
-                            on_error,
-                            tap,
-                            eq,
-                            volume: chain_volume.getter(),
-                            ceiling: chain_volume.getter(),
-                            normalisation,
-                        })
-                    },
-                    Arc::clone(&control),
-                    audio_tx,
-                )
-                .context("unable to start the in-process audio engine")?;
-                (None, Some(NativePlayer { worker, volume }), Some(audio_rx))
-            }
-        };
+        let control = AudioControl::new(config.buffer_ms);
+        let volume = SharedVolume::new(config.initial_volume);
+        let (audio_tx, audio_rx) = mpsc::unbounded_channel();
+        let device = config.audio_device.clone();
+        let buffer_ms = config.buffer_ms;
+        let tap = Arc::clone(&config.tap);
+        let eq = Arc::clone(&config.eq);
+        let chain_control = Arc::clone(&control);
+        let chain_volume = volume.clone();
+        let normalisation = Arc::new(AtomicU64::new(1.0f64.to_bits()));
+        let error_state = Arc::clone(&state);
+        let error_notify = Arc::clone(&notify);
+        let on_error: ErrorHook = Arc::new(move |message: String| {
+            let snapshot = {
+                let mut current = error_state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                current.error = Some(message);
+                current.clone()
+            };
+            (error_notify)(EngineEvent::State(snapshot));
+        });
+        let worker = Worker::spawn(
+            move || {
+                build_chain(ChainConfig {
+                    device,
+                    buffer_ms,
+                    control: chain_control,
+                    on_error,
+                    tap,
+                    eq,
+                    volume: chain_volume.getter(),
+                    ceiling: chain_volume.getter(),
+                    normalisation,
+                })
+            },
+            Arc::clone(&control),
+            audio_tx,
+        )
+        .context("unable to start the in-process audio engine")?;
+        let native = NativePlayer { worker, volume };
 
         let actor = Actor {
             state: Arc::clone(&state),
             notify: Arc::clone(&notify),
-            mpv: mpv_lines,
             native,
             messages: messages.clone(),
             interrupted: Arc::clone(&interrupted),
@@ -249,7 +169,7 @@ impl YtEngine {
             retried_uri: None,
             resolve_failures: 0,
         };
-        tokio::spawn(run_actor(actor, receiver, audio));
+        tokio::spawn(run_actor(actor, receiver, audio_rx));
 
         notify(EngineEvent::State(
             state
@@ -261,7 +181,6 @@ impl YtEngine {
             device_id: config.device_id(),
             state,
             messages,
-            child: Mutex::new(child),
             interrupted,
             shutting_down,
         })
@@ -286,11 +205,6 @@ impl YtEngine {
     /// [`Self::resume_point`].
     pub fn shutdown(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
-        if let Ok(mut child) = self.child.lock()
-            && let Some(child) = child.as_mut()
-        {
-            let _ = child.start_kill();
-        }
         // The in-process engine takes the same message the actor folds.
         let _ = self.messages.send(Message::Shutdown);
     }
@@ -415,18 +329,17 @@ impl NativePlayer {
     }
 }
 
-/// The actor owns the queue and folds mpv's events into [`LocalState`].
+/// The actor owns the queue and folds the worker's reports into
+/// [`LocalState`].
 struct Actor {
     state: Arc<Mutex<LocalState>>,
     notify: Notify,
-    /// Newline-delimited JSON to mpv.
-    mpv: mpsc::UnboundedSender<String>,
-    /// The in-process engine, when it is the one playing.
-    native: Option<NativePlayer>,
+    /// The in-process engine that plays what the actor picks.
+    native: NativePlayer,
     /// Its own message channel, so a finished resolve can come back in.
     messages: mpsc::UnboundedSender<Message>,
-    /// What was playing when mpv went away, for the engine that replaces
-    /// this one.
+    /// What was playing when the engine went away, for the engine that
+    /// replaces this one.
     interrupted: Arc<Mutex<Option<Interrupted>>>,
     shutting_down: Arc<AtomicBool>,
     yt_dlp: PathBuf,
@@ -446,7 +359,7 @@ struct Actor {
     want_play: bool,
     /// The play being set up. Results of older resolves are discarded.
     play_id: u64,
-    /// mpv holds a playable file for the current song.
+    /// The worker holds a playable stream for the current song.
     loaded: bool,
     /// A resolve for the current song is in flight.
     awaiting: bool,
@@ -474,33 +387,20 @@ struct Actor {
 async fn run_actor(
     mut actor: Actor,
     mut messages: mpsc::UnboundedReceiver<Message>,
-    mut audio: Option<mpsc::UnboundedReceiver<AudioEvent>>,
+    mut audio: mpsc::UnboundedReceiver<AudioEvent>,
 ) {
-    if actor.native.is_none() {
-        actor.observe();
-    }
     loop {
         tokio::select! {
             message = messages.recv() => {
                 let Some(message) = message else { return; };
                 match message {
                     Message::Command(command) => actor.apply(command),
-                    Message::Mpv(value) => actor.mpv_event(&value),
                     Message::Resolved { id, result } => actor.resolved(id, result),
                     Message::Prefetched { uri, result } => actor.prefetched(uri, result),
                     Message::Shutdown => actor.silence(),
-                    Message::Closed => {
-                        actor.closed();
-                        return;
-                    }
                 }
             }
-            event = async {
-                match audio.as_mut() {
-                    Some(receiver) => receiver.recv().await,
-                    None => std::future::pending().await,
-                }
-            } => {
+            event = audio.recv() => {
                 match event {
                     Some(event) => actor.audio_event(event),
                     None => {
@@ -513,53 +413,7 @@ async fn run_actor(
     }
 }
 
-async fn run_reader(
-    reader: impl tokio::io::AsyncRead + Unpin + Send,
-    messages: mpsc::UnboundedSender<Message>,
-) {
-    let mut lines = BufReader::new(reader).lines();
-    loop {
-        match lines.next_line().await {
-            Ok(Some(line)) => {
-                if let Ok(value) = serde_json::from_str::<Value>(&line)
-                    && messages.send(Message::Mpv(value)).is_err()
-                {
-                    return;
-                }
-            }
-            Ok(None) | Err(_) => {
-                let _ = messages.send(Message::Closed);
-                return;
-            }
-        }
-    }
-}
-
-async fn run_writer(
-    mut writer: impl tokio::io::AsyncWrite + Unpin + Send,
-    mut lines: mpsc::UnboundedReceiver<String>,
-) {
-    while let Some(line) = lines.recv().await {
-        if writer.write_all(line.as_bytes()).await.is_err()
-            || writer.write_all(b"\n").await.is_err()
-        {
-            return;
-        }
-        let _ = writer.flush().await;
-    }
-}
-
 impl Actor {
-    /// Watches the two properties the interface follows.
-    fn observe(&self) {
-        self.send(json!(["observe_property", 1, "time-pos"]));
-        self.send(json!(["observe_property", 2, "duration"]));
-    }
-
-    fn send(&self, command: Value) {
-        let _ = self.mpv.send(json!({ "command": command }).to_string());
-    }
-
     fn publish(&self) {
         let snapshot = self
             .state
@@ -705,20 +559,13 @@ impl Actor {
         }
         if let Some(cached) = self.cached_stream(&entry.uri) {
             // Resolved already, by the prefetch made while the last song
-            // played, or by an earlier play: start without yt-dlp.
+            // played, or by an earlier play: start without the resolver.
             log::info!("YouTube: reusing a cached URL for {}", entry.track.title);
             let url = cached.url.clone();
             let mime = cached.mime.clone();
             let length = cached.content_length;
             self.awaiting = false;
-            if let Some(native) = &self.native {
-                native.load(&url, length, mime.as_deref(), position_ms, fade, id);
-            } else {
-                self.send(json!(["loadfile", url, "replace"]));
-                if position_ms > 0 {
-                    self.seek_command(position_ms);
-                }
-            }
+            self.native.load(&url, length, mime.as_deref(), position_ms, fade, id);
             return;
         }
         self.awaiting = true;
@@ -753,21 +600,16 @@ impl Actor {
                 if let Some(uri) = uri {
                     self.store_url(uri, &stream);
                 }
-                if let Some(native) = &self.native {
-                    native.load(
-                        &stream.url,
-                        stream.content_length,
-                        stream.mime.as_deref(),
-                        self.target_ms,
-                        self.pending_fade,
-                        id,
-                    );
-                } else {
-                    self.send(json!(["loadfile", stream.url.clone(), "replace"]));
-                    if self.target_ms > 0 {
-                        self.seek_command(self.target_ms);
-                    }
-                }
+                let position_ms = self.target_ms;
+                let fade = self.pending_fade;
+                self.native.load(
+                    &stream.url,
+                    stream.content_length,
+                    stream.mime.as_deref(),
+                    position_ms,
+                    fade,
+                    id,
+                );
             }
             Err(message) => {
                 self.awaiting = false;
@@ -906,40 +748,14 @@ impl Actor {
         });
     }
 
-    fn mpv_event(&mut self, value: &Value) {
-        match value.get("event").and_then(Value::as_str) {
-            Some("file-loaded") => self.file_loaded(),
-            Some("end-file") => self.end_file(value),
-            Some("property-change") => self.property_change(value),
-            _ => {}
-        }
-    }
-
-    fn file_loaded(&mut self) {
-        // A file loaded for a song that is still parked (or was replaced
-        // already) is not the current one; its events are not applied.
-        if self
-            .current
-            .as_ref()
-            .is_none_or(|entry| entry.waiting_for_metadata)
-        {
-            return;
-        }
-        self.send(json!(["set_property", "pause", !self.want_play]));
-        self.track_started();
-    }
-
-    /// The current song is playing: the shared tail of mpv's file-loaded
-    /// and the in-process engine's opened report.
+    /// The current song is playing: the worker opened its stream.
     fn track_started(&mut self) {
         self.loaded = true;
         self.awaiting = false;
-        if !self.want_play
-            && let Some(native) = &self.native
-        {
-            // mpv is told to pause just above; the worker needs the same
-            // order when the song began loading while paused.
-            native.worker.send(AudioCommand::Pause);
+        if !self.want_play {
+            // The song began loading while paused: the stream is open, so
+            // the worker is told to hold it there.
+            self.native.worker.send(AudioCommand::Pause);
         }
         let mut state = self
             .state
@@ -961,51 +777,6 @@ impl Actor {
         self.publish();
         self.retried_uri = None;
         self.prefetch_next();
-    }
-
-    fn end_file(&mut self, value: &Value) {
-        match value.get("reason").and_then(Value::as_str) {
-            Some("eof") => {
-                // The track played out. One advance per file: `loaded`
-                // guards against a seek to the end arriving twice.
-                if self.loaded && self.current.is_some() {
-                    self.loaded = false;
-                    if self.repeat == RepeatMode::Track {
-                        self.start(0, false);
-                    } else {
-                        self.advance(false);
-                    }
-                }
-            }
-            Some("error") => {
-                self.loaded = false;
-                let detail = value
-                    .get("file_error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("mpv could not play this stream");
-                let position = self
-                    .state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .position_now();
-                // The URL that failed is never reused, whether or not a
-                // retry is left: a bad URL in the cache must not poison
-                // every later play of the song.
-                if let Some(entry) = self.current.clone() {
-                    self.url_cache.remove(&entry.uri);
-                    // One fresh resolve, then the failure stands.
-                    if self.retried_uri.as_deref() != Some(entry.uri.as_str()) {
-                        log::warn!("YouTube: load failed ({detail}), resolving again");
-                        self.retried_uri = Some(entry.uri.clone());
-                        self.start(position, false);
-                        return;
-                    }
-                }
-                self.fail(&format!("Playback stopped: {detail}"));
-            }
-            // "stop" and "quit" follow our own loadfile and shutdown.
-            _ => {}
-        }
     }
 
     /// The next song: the user's queue first, then the context. Repeat and
@@ -1088,9 +859,9 @@ impl Actor {
     }
 
     fn toggle(&mut self) {
-        // Nothing is loaded in mpv (a failed resolve stopped it, say):
-        // pressing play starts the current song again, with a fresh
-        // one-retry budget.
+        // Nothing is loaded (a failed resolve stopped it, say): pressing
+        // play starts the current song again, with a fresh one-retry
+        // budget.
         if !self.loaded && !self.awaiting && self.current.is_some() {
             self.want_play = true;
             self.retried_uri = None;
@@ -1149,13 +920,10 @@ impl Actor {
         let position = position_ms.min(duration.saturating_sub(1));
         self.target_ms = position;
         if self.loaded {
-            match &self.native {
-                Some(native) => native.worker.send(AudioCommand::Seek {
-                    position_ms: u64::from(position),
-                    seq: self.play_id,
-                }),
-                None => self.seek_command(position),
-            }
+            self.native.worker.send(AudioCommand::Seek {
+                position_ms: u64::from(position),
+                seq: self.play_id,
+            });
         }
         let mut state = self
             .state
@@ -1168,19 +936,12 @@ impl Actor {
         self.publish();
     }
 
-    fn seek_command(&self, position_ms: u32) {
-        self.send(json!(["seek", f64::from(position_ms) / 1000.0, "absolute"]));
-    }
-
     fn set_volume(&mut self, volume: u16) {
         self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .volume = volume;
-        match &self.native {
-            Some(native) => native.volume.set(volume),
-            None => self.send(json!(["set_property", "volume", volume_percent(volume)])),
-        }
+        self.native.volume.set(volume);
         self.publish();
     }
 
@@ -1206,82 +967,20 @@ impl Actor {
         }
     }
 
-    fn property_change(&mut self, value: &Value) {
-        let name = value
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let data = value.get("data").cloned().unwrap_or(Value::Null);
-        match name {
-            "time-pos" => {
-                let Some(seconds) = data.as_f64() else {
-                    return;
-                };
-                let position = (seconds.max(0.0) * 1000.0) as u32;
-                let mut state = self
-                    .state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if state.playback != Playback::Playing {
-                    // A paused or idle mpv still reports a position.
-                    return;
-                }
-                state.position_ms = position;
-                state.position_at = Some(Instant::now());
-                drop(state);
-                if position.abs_diff(self.told_ms) >= POSITION_NOTIFY_MS {
-                    self.told_ms = position;
-                    self.publish();
-                }
-            }
-            "duration" => {
-                let Some(seconds) = data.as_f64() else {
-                    return;
-                };
-                let duration = (seconds.max(0.0) * 1000.0) as u32;
-                if duration == 0 {
-                    return;
-                }
-                // mpv reads the real duration off the stream; it also
-                // covers songs whose cached metadata had none.
-                let mut state = self
-                    .state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let Some(track) = state.track.as_mut() else {
-                    return;
-                };
-                if track.duration_ms == duration {
-                    return;
-                }
-                track.duration_ms = duration;
-                drop(state);
-                self.publish();
-            }
-            _ => {}
-        }
-    }
-
-    /// Pauses or resumes whichever backend is playing.
+    /// Pauses or resumes the worker.
     fn pause(&self, paused: bool) {
         let command = if paused {
             AudioCommand::Pause
         } else {
             AudioCommand::Resume
         };
-        match &self.native {
-            Some(native) => native.worker.send(command),
-            None => self.send(json!(["set_property", "pause", paused])),
-        }
+        self.native.worker.send(command);
     }
 
     /// Silences whatever is playing without touching the state: a song is
     /// about to be parked or replaced.
     fn park(&self) {
-        match &self.native {
-            Some(native) => native.worker.send(AudioCommand::Stop),
-            None => self.send(json!(["stop"])),
-        }
+        self.native.worker.send(AudioCommand::Stop);
     }
 
     fn fail(&mut self, message: &str) {
@@ -1330,8 +1029,8 @@ impl Actor {
         }
     }
 
-    /// The in-process engine's reports, folded into the same state the mpv
-    /// events feed.
+    /// The in-process engine's reports, folded into the state the
+    /// interface reads.
     fn audio_event(&mut self, event: AudioEvent) {
         match event {
             AudioEvent::Opened { seq, opened, .. } => {
@@ -1432,9 +1131,7 @@ impl Actor {
 
     /// Takes the in-process engine down with the app.
     fn silence(&mut self) {
-        if let Some(native) = &self.native {
-            native.worker.send(AudioCommand::Shutdown);
-        }
+        self.native.worker.send(AudioCommand::Shutdown);
     }
 }
 
@@ -1460,14 +1157,8 @@ fn next_list_index(
     }
 }
 
-/// The volume as mpv's percent, from the interface's 16-bit level.
-fn volume_percent(volume: u16) -> f64 {
-    let percent = f64::from(volume) * 100.0 / f64::from(u16::MAX);
-    (percent * 10.0).round() / 10.0
-}
-
 /// The named program on PATH, then the places Windows installs commonly
-/// put it (pip's per-user Scripts folder, the portable mpv).
+/// put it (pip's per-user Scripts folder).
 pub(crate) fn find_tool(name: &str) -> Option<PathBuf> {
     let exe = if cfg!(windows) {
         format!("{name}.exe")
@@ -1485,24 +1176,6 @@ pub(crate) fn find_tool(name: &str) -> Option<PathBuf> {
     #[cfg(windows)]
     {
         let local = PathBuf::from(std::env::var_os("LOCALAPPDATA")?);
-        if name == "mpv" {
-            let mut candidates = vec![
-                local.join("Programs").join("mpv").join(&exe),
-                local.join("mpv").join(&exe),
-            ];
-            // Installers and package managers put mpv under Program Files
-            // too; a PATH entry usually covers them, but not always.
-            for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
-                if let Some(directory) = std::env::var_os(variable) {
-                    candidates.push(PathBuf::from(directory).join("mpv").join(&exe));
-                }
-            }
-            for candidate in candidates {
-                if candidate.is_file() {
-                    return Some(candidate);
-                }
-            }
-        }
         if name == "yt-dlp" {
             let mut roots = vec![local.join("Programs").join("Python")];
             if let Some(appdata) = std::env::var_os("APPDATA") {
@@ -1522,44 +1195,6 @@ pub(crate) fn find_tool(name: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// mpv's IPC address: a named pipe on Windows, a socket elsewhere.
-fn ipc_path() -> PathBuf {
-    let pid = std::process::id();
-    #[cfg(windows)]
-    {
-        PathBuf::from(format!(r"\\.\pipe\musify-{pid}"))
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::temp_dir().join(format!("musify-{pid}.sock"))
-    }
-}
-
-/// Waits for mpv to create the pipe and connects to it.
-async fn connect_ipc(pipe: &Path) -> Result<BoxedIpc> {
-    let deadline = tokio::time::Instant::now() + IPC_CONNECT_TIMEOUT;
-    loop {
-        #[cfg(windows)]
-        let attempt: std::io::Result<BoxedIpc> =
-            tokio::net::windows::named_pipe::ClientOptions::new()
-                .open(pipe.as_os_str())
-                .map(|client| Box::new(client) as BoxedIpc);
-        #[cfg(not(windows))]
-        let attempt: std::io::Result<BoxedIpc> = tokio::net::UnixStream::connect(pipe)
-            .await
-            .map(|stream| Box::new(stream) as BoxedIpc);
-        match attempt {
-            Ok(stream) => return Ok(stream),
-            Err(error) => {
-                if tokio::time::Instant::now() >= deadline {
-                    return Err(anyhow!("could not reach mpv's control pipe: {error}"));
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        }
-    }
 }
 
 /// The command that runs yt-dlp, prepared to leave no trace on screen.
@@ -1637,7 +1272,7 @@ pub(crate) async fn resolve(
 ///
 /// The format selector is audio-only, and YouTube's player-stitched ads
 /// (pre-roll, mid-roll) are separate media that never ride this stream:
-/// mpv receives the song's own audio track, so playback carries no
+/// the worker receives the song's own audio track, so playback carries no
 /// platform ads without any ad-specific code. Sponsor reads inside the
 /// content do remain; skipping those needs SponsorBlock (not included).
 async fn resolve_yt_dlp(yt_dlp: &Path, query: &str) -> Result<yt_resolver::Resolved> {
@@ -1684,15 +1319,6 @@ async fn resolve_yt_dlp(yt_dlp: &Path, query: &str) -> Result<yt_resolver::Resol
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_backend_escape_needs_the_exact_word_mpv() {
-        assert_eq!(backend_from(None), BackendChoice::Native);
-        assert_eq!(backend_from(Some("mpv")), BackendChoice::Mpv);
-        assert_eq!(backend_from(Some("MPV")), BackendChoice::Mpv);
-        assert_eq!(backend_from(Some("native")), BackendChoice::Native);
-        assert_eq!(backend_from(Some("")), BackendChoice::Native);
-    }
 
     #[test]
     fn an_entry_without_metadata_waits_for_it() {
@@ -1750,16 +1376,9 @@ mod tests {
     }
 
     #[test]
-    fn the_volume_maps_across_mpvs_full_range() {
-        assert_eq!(volume_percent(0), 0.0);
-        assert_eq!(volume_percent(u16::MAX), 100.0);
-        assert!((volume_percent(u16::MAX / 2) - 50.0).abs() < 0.1);
-    }
-
-    #[test]
     fn repeat_track_replays_only_on_end_of_track() {
-        // Next skips on: only the end-file handler consults repeat-track,
-        // which is `end_file`'s job, tested through `next_list_index` for
+        // Next skips on: only the end of the stream advances, which is
+        // `audio_event`'s `Ended` job, tested through `next_list_index` for
         // the context and asserted here for the intent.
         assert_eq!(
             next_list_index(2, Some(1), false, RepeatMode::Track, |_| 0),

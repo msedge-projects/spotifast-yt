@@ -161,8 +161,8 @@ impl RangeSource {
         let mut builder = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .user_agent(USER_AGENT)
-            // The shape mpv streams with; googlevideo's HTTP/2 handling
-            // drops slow bodies where HTTP/1.1 streams steadily.
+            // The shape the stream is served over; googlevideo's HTTP/2
+            // handling drops slow bodies where HTTP/1.1 streams steadily.
             .http1_only();
         // A proxy for testing from a machine whose own address the CDN
         // refuses; unset in normal use.

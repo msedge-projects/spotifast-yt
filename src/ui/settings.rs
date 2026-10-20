@@ -480,7 +480,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if app.yt_playback {
                 gettext(
                     locale,
-                    "This computer plays through YouTube (yt-dlp and mpv).",
+                    "This computer plays through YouTube (yt-dlp).",
                 )
             } else {
                 gettext(locale, "This computer is a Spotify Connect device.")
@@ -515,7 +515,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if app.yt_playback {
                 gettext(
                     locale,
-                    "Free accounts play through YouTube: install yt-dlp and mpv, then enable playback here.",
+                    "Free accounts play through YouTube: install yt-dlp, then enable playback here.",
                 )
             } else {
                 gettext(

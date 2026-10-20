@@ -3,6 +3,8 @@
 Source: read-only analysis of `C:\Users\DELL\spotifast-yt` @ v0.13.2 (2026-10-14).
 Policy note: upstream `AGENTS.md` forbids alternate audio sources (contribution/product policy);
 this is a fork-level decision (MIT), keep the repo personal, do not report upstream.
+Status: implemented, then partly superseded. The mpv backend this plan describes was removed
+on 2026-10-20 (stage 3); the resolver, metadata and queue design stand.
 
 ## Key facts
 
