@@ -2,6 +2,8 @@
 
 Written at the end of a long working session, for the next session to take over.
 Date: Mon Oct 19 2026. Everything below is verified state unless marked otherwise.
+Updated Tue Oct 20 2026: stage 3 landed (the mpv backend is deleted, the engine is
+native-only) and that build is installed.
 
 ---
 
@@ -10,7 +12,7 @@ Date: Mon Oct 19 2026. Everything below is verified state unless marked otherwis
 - Repo: `C:\Users\DELL\spotifast-yt` (fork of crmne/musify, "Musify"), remote `https://github.com/msedge-projects/spotifast-yt`.
 - Rule: commit to the fork's `main` only. Never touch upstream crmne/spotifast or crmne/musify.
 - Fork identity: fully YouTube-based playback. Spotify is used for browsing/metadata; audio comes from YouTube via the app's own in-process engine (no mpv in the default path).
-- Code head at handoff: `7473c3f` "Be born the size the island already is". The working tree is clean apart from this handoff document, which is committed on top of it; nothing else changed. `origin/main` and `origin/scratch/native-player` carry the same code (scratch is force-pushed from main; the VPS check script checks out scratch).
+- Code head: `aa3d529` "Put the formatter's lines where it asked" (2026-10-20), on top of the stage 3 commit `5947f69`. At the handoff itself it was `7473c3f` "Be born the size the island already is". The working tree is clean; `origin/main` and `origin/scratch/native-player` carry the same code (scratch is force-pushed from main; the VPS check script checks out scratch).
 
 Repo docs worth reading (older context, partly superseded):
 - `YT-ENGINE-PLAN.md` — the original implementation map with file:line references for the first YouTube engine. Still useful for the resolver/metadata design; the playback path has since been rebuilt (this handoff supersedes it for anything engine-related).
@@ -35,8 +37,7 @@ Repo docs worth reading (older context, partly superseded):
 - `src/yt_audio/` (source.rs, worker.rs, decode.rs): symphonia demux for fragmented MP4/AAC and WebM/Opus (plus rare Vorbis), Opus through `rusty-opus =1.0.2`, decode into interleaved stereo f64 at 44.1 kHz, 512-frame packets.
 - `source.rs`: a range-backed burst buffer. Hard-won wire facts: send only a `Range: bytes=N-` header (the `&range=` query param compounds), set a UA, `http1_only`, drain bodies at full speed, in-window seeks free, 30 s stall ceiling.
 - The worker builds the same sink chain as Spotify mode (`sink::build_chain` + `SharedVolume`), so EQ and visualizers work on YouTube songs.
-- `src/player_yt.rs`: the engine actor drives the worker by default; the mpv child-process backend is kept behind `MUSIFY_YT_PLAYER=mpv` for the transition. User-chosen changes fade; natural transitions do not; one re-resolve on failure then an honest error.
-- Stage 3 (remove mpv entirely) is still pending the user's approval after living with it.
+- `src/player_yt.rs`: the engine actor drives the worker and nothing else. Stage 3 landed on 2026-10-20 (commit `5947f69`): the mpv child process, its IPC plumbing and event folding, mpv's half of `find_tool`, and the `MUSIFY_YT_PLAYER` escape are gone, and the settings copy no longer names mpv. User-chosen changes fade; natural transitions do not; one re-resolve on failure then an honest error.
 
 ### 3.2 Duration bug (fixed)
 - YouTube's fragmented stream header states its first segment's length (~4.19 s) and used to overwrite the true song length with it (user saw 0:04 on "Creepin'"). Now the metadata duration wins; the header only fills in when metadata has none. In `player_yt.rs` (`AudioEvent::Opened` handler).
@@ -82,20 +83,21 @@ Behavior implemented in `src/ui/island.rs` + wiring:
 
 ## 4. Verified state at handoff
 
-- VPS gates: run20 and run21 were fully green (check, clippy `-D warnings`, full test suite) on the island code. Latest run logs: `~/check-run21.out`, `check.log`/`clippy.log`/`test.log`.
-- Windows exe: built from `7473c3f` on vps1, md5 `EAEB1A21D3C2903058D246E0539A2255`, installed to `C:\Users\DELL\AppData\Local\Programs\Musify\musify.exe`, app relaunched with it (PID 7396 at install time; not running when this doc was written).
+- VPS gates: run23 was fully green on `aa3d529` (check, clippy `-D warnings`, 1273 tests passed, 0 failed, 4 ignored). Logs: `~/check-run23.out`, plus `check.log`/`clippy.log`/`test.log` on the box. run20 and run21 were the earlier green island runs.
+- `cargo fmt --all --check` is not clean repo-wide, but only in files these sessions did not touch: `src/app.rs` (3 hunks), `src/ui/island.rs` (4), `src/yt_audio/decode.rs` (1). `src/player_yt.rs` and `src/ui/settings.rs` are clean. The VPS script does not run fmt; `~/musify-check2.sh` on the box does, and is worth keeping.
+- Windows exe: built from `aa3d529` on vps1 with `cargo xwin build --release --locked --no-default-features --target x86_64-pc-windows-msvc` (`~/xwin3.log`, EXIT 0; the only warning is the cosmetic LNK4099 about MSVC CRT PDBs). md5 `9EFE3DABCEA7680E927049550991D604`, 31,074,304 bytes, installed over the island build; the replaced file is `musify.exe.bak-7473c3f`. Relaunched after install as PID 8728 and `--version` printed `musify 0.13.2`.
 - Backups in the same folder: `musify.exe.bak-a836909` (previous build), `.bak-e766ed9`, `.bak-f51e12d`, `.bak-90106ac`, `.bak-c8f1796`, `.bak-473d7dc-era`, plus many older `.bak-<sha>` from previous sessions.
-- PC settings (persisted): `%APPDATA%\msedge-projects\musify\config\settings.json` — `winamp_window=false`, `custom_titlebar=false`, `youtube_mode=true`, theme light, volume 19660. The user's display is 1366x768 at 100% DPI. Windows 10 build 18362 (no Mica).
+- PC settings (persisted): `%APPDATA%\msedge-projects\musify\config\settings.json`: `winamp_window=false`, `custom_titlebar=false`, `youtube_mode=true`, theme now dark (it was light at the handoff), volume 19660, and an EQ curve in the first five bands (8.8, 7.2, 5.6, 3.2, 0.8). The user's display is 1366x768 at 100% DPI. Windows 10 build 18362 (no Mica).
 
 ## 5. NEXT STEPS (prioritized)
 
-1. **The user has not yet reacted to the island.** As of this handoff they have not tried it. Expect feedback on:
+1. **The island still has no verdict.** On 2026-10-20 the user played music but has not commented on the island. Expect feedback on:
    - The wake strip: an 8 px always-on-top strip at the top-centre catches clicks there while minimized (they accepted this trade-off with variant B).
    - Timing: `MORPH=50` → 460 ms morph, appear 0.32 s, fold graces 0.5 s (pill) / 0.7 s (card). All are constants at the top of `island.rs` plus `GRACE_S`/`CARD_GRACE_S`.
    - Fidelity of the card: the restore button is the one addition; everything else follows the reference.
    - They may want Ctrl+M to summon the island instead of the classic mini player, or the island to exist while the app is open. Both are easy follow-ups.
-2. **Stage 3 of the engine**: delete the mpv backend and the `MUSIFY_YT_PLAYER` escape once the user approves the native engine by ear. The spec's stage 3 also includes resource comparison against mpv and removing mpv-specific settings copy.
-3. **Live listening proof** on the PC (VPS IP cannot play YouTube: LOGIN_REQUIRED). If the user reports the left-ear thing again, use the probe above. Also ask about stutters if `audio queue ran dry` appears in the log.
+2. **Stage 3 is done** (`5947f69`, formatting follow-up `aa3d529`, installed 2026-10-20). What remains of its spec is the resource comparison: with no player child process left there is nothing to compare against on the PC, so either cite the old mpv evidence or drop that line from the spec. Measured on the PC on 2026-10-20: the app had no child processes at all, working set 105.6 MB and private 82.8 MB after ten minutes of use, 15.9 s of CPU. `mpv.exe` is still installed at `%LOCALAPPDATA%\Programs\mpv`; nothing starts it any more, and it can be deleted whenever.
+3. **Live listening proof** happened on 2026-10-20 at 20:15: the log shows `YouTube: resolving Creepin'`, one `LOGIN_REQUIRED` refusal answered by a retry, a resolve in 594 ms, the audio output opened, and the next song prefetched in 146 ms. That is the first recorded native playback on the PC. The VPS IP still cannot play YouTube (LOGIN_REQUIRED), so any further listening test must happen on the PC. If the left-ear thing returns, use the probe above; watch for `audio queue ran dry` if stutters are reported.
 4. **Search panel rows**: if the user still finds the panel too short on a long list, the height math is in `widgets.rs::search_suggestions` (cap 0.62 * screen height).
 5. **Mica** stays dormant for Win11; nothing to do on their Win10 machine.
 
@@ -106,9 +108,9 @@ Behavior implemented in `src/ui/island.rs` + wiring:
 - SSH from the PC: only Git's OpenSSH works: `"C:\Program Files\Git\usr\bin\ssh.exe"`. Mint a fresh token via the API if the old one expired, then use `-p 2222 -o StrictHostKeyChecking=accept-new <token>@api.instabox.sh`. `scp.exe -O -P 2222` for files. Exec through the API also works and avoids tokens.
 - Machine auto-suspends after ~30 min idle. Wake and wait ~30-90 s; the API may answer `machine is still changing state` briefly (retry).
 - Box layout: checkout `~/musify`; the check script `~/musify-check.sh`; renders `~/shots`. Rust: `/opt/rust/rustup` toolchain 1.99.0 for check/test; `~/.rustup` holds 1.98.0 + the windows-msvc target for `cargo xwin`; `~/.cache/cargo-xwin` (~1.1 GB, keep). Disk `/data` is 20 GB and was ~3 GB free; the msvc target dir and debug incremental are the big consumers (delete `target/debug/incremental` when needed).
-- Gates: `~/musify-check.sh` fetches `origin/scratch/native-player`, checks out, then runs check, clippy `-D warnings`, and the full test suite with debuginfo off. Launch it detached and poll:
-  `grep -E 'check-ok|clippy-ok|test-ok|FAILED|EXIT:' ~/check-runN.out`.
-  Local copy of the script: `C:\Users\DELL\AppData\Local\Temp\opencode\remote-check.sh`.
+- Gates: `~/musify-check.sh` fetches `origin/scratch/native-player`, checks out, then runs check, clippy `-D warnings`, and the full test suite with debuginfo off. `~/musify-check2.sh` on the box is the same with a `cargo fmt --all --check` step in front (added 2026-10-20). Launch either detached and poll:
+  `grep -E 'fmt-ok|check-ok|clippy-ok|test-ok|FAILED|EXIT:' ~/check-runN.out`.
+  Local copy of the older script: `C:\Users\DELL\AppData\Local\Temp\opencode\remote-check.sh`.
 - Long scripts: base64 them and run over ssh:
   `$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content script.sh -Raw))); ssh ... "echo $b64 | base64 -d | tr -d '\r' | bash"`.
 - Windows cross build (proven pattern; use exactly this shape):
@@ -133,7 +135,7 @@ Behavior implemented in `src/ui/island.rs` + wiring:
 - `src/ui/topbar.rs` — pill; suggestion rows read `app.search.suggestions`; Enter/commit.
 - `src/entrypoint.rs` — `MiniWindow::wanted` (island branch first, then winamp mini), `clear_color` transparent for island/winamp, Mica/tint block skipping mini/island, staging, demo options.
 - `src/demo.rs` — island surfaces; search demo seeds suggestions.
-- `src/player_yt.rs` — engine actor, native + mpv (env switch), duration guard, prefetch, fades.
+- `src/player_yt.rs` — engine actor, the in-process worker (the only backend since stage 3), duration guard, prefetch, fades.
 - `src/yt_audio/{source,worker,decode}.rs` — playback source/worker/decoder; `channel_balance` probe helper; fixture channel-parity test.
 - `src/yt_resolver.rs` — quality ranking (141 > 251 > 140 > 250 > 249 > 139) and resolver.
 - `src/sink.rs` — `build_chain`, `SharedVolume`, `AudioControl`, chain config (the shared sink chain).
@@ -141,9 +143,12 @@ Behavior implemented in `src/ui/island.rs` + wiring:
 - Deleted: `src/ui/glass.rs`. `src/ui/mod.rs` declares `pub mod island` in its place.
 - Branch `scratch/native-player` is a mirror of main for box checkouts (force-pushed whenever main moves).
 
-## 8. Recent commits (newest first, at handoff)
+## 8. Recent commits (newest first, at handoff plus the 2026-10-20 follow-up)
 
 ```
+aa3d529 Put the formatter's lines where it asked
+5947f69 Keep only the engine that lives in this process
+339ec12 Hand the session over: the island, the engine, and the way the box works
 7473c3f Be born the size the island already is
 ed4aa22 Settle the pill for a screenshot too
 60b9fc2 Close the braces the probes left open
@@ -175,14 +180,15 @@ f51e12d Float the panel in its window with room for its edge
 - Their screenshots are often crops; a transparent app window shows the desktop through, so a dark region inside the window bounds may just be the wallpaper/app behind, not a paint bug. Capture the full screen or the window rect before concluding.
 - `musify.log` is replaced at every app start (`%LOCALAPPDATA%\msedge-projects\musify\data\musify.log`); read it soon after a session or ask the user to reproduce.
 - The VPS IP cannot play YouTube (LOGIN_REQUIRED). Live playback tests must happen on the PC; the VPS is for gates and renders.
+- rustfmt keeps a method chain under 60 columns, so a chain longer than that breaks after the receiver even when the whole line would fit the width; matching the formatter beats trusting your eye. `cargo fmt --all --check` is in `CONTRIBUTING.md` but was not in the VPS script, so drift had collected in `src/app.rs`, `src/ui/island.rs` and `src/yt_audio/decode.rs` (it is still there; nothing in this session touched those hunks).
 - `git` warns about LF→CRLF on commit; that is normal (`core.autocrlf=true`). Pushes use the fork remote only.
 - InstaBox exec API: transient request failures happen; retry. When the machine is resuming, the API returns `operation_conflict`; wait and retry. Detached jobs need `setsid nohup ... < /dev/null > /dev/null 2>&1 &` and are verified by tailing their log files over ssh.
 
 ## 10. Quick reference: the user's last known state and what to ask
 
-- The app was last installed with the island build and opened for them; they have not confirmed whether they tried it.
+- The app now runs the stage 3 build (md5 `9EFE3DABCEA7680E927049550991D604`, from `aa3d529`), installed 2026-10-20 after the user chose stage 3 and a live listening proof together. They played Creepin' on the previous build; the new one changes no playback behaviour, it only removes the unused backend.
 - Ask/confirm when they return: how the island feels (wake, slide-in, open, fold timings), whether the awake strip position/top-centre placement is right, whether they want Ctrl+M to summon the island instead of the classic player, and whether the restore button (right end of the transport row) or Escape as the way home is acceptable.
-- If they confirm the engine by ear, proceed to stage 3 (remove mpv paths and `MUSIFY_YT_PLAYER`).
+- Ask whether the engine is confirmed by ear. It is the only backend now, so a problem is the engine's to fix rather than a reason to switch back; the deleted code is in git at `339ec12` if a comparison is ever needed.
 - If they report the left-ear imbalance again, use `musify.exe probe-audio "<song>"` and read the log line `Probe: channels left rms ..., right rms ...`.
 
 ---
