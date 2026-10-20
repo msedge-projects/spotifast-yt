@@ -39,8 +39,10 @@ Repo docs worth reading (older context, partly superseded):
 - The worker builds the same sink chain as Spotify mode (`sink::build_chain` + `SharedVolume`), so EQ and visualizers work on YouTube songs.
 - `src/player_yt.rs`: the engine actor drives the worker and nothing else. Stage 3 landed on 2026-10-20 (commit `5947f69`): the mpv child process, its IPC plumbing and event folding, mpv's half of `find_tool`, and the `MUSIFY_YT_PLAYER` escape are gone, and the settings copy no longer names mpv. User-chosen changes fade; natural transitions do not; one re-resolve on failure then an honest error.
 
-### 3.2 Duration bug (fixed)
-- YouTube's fragmented stream header states its first segment's length (~4.19 s) and used to overwrite the true song length with it (user saw 0:04 on "Creepin'"). Now the metadata duration wins; the header only fills in when metadata has none. In `player_yt.rs` (`AudioEvent::Opened` handler).
+### 3.2 Duration bug (fixed twice)
+- YouTube's fragmented stream header states its first segment's length (~4.19 s) and used to overwrite the true song length with it (user saw 0:04 on "Creepin'"). Metadata won from then on, but a row that arrived with no length still fell back to the header: "Maine Royaan (Lofi Remix)" played for 5:05 while the bar read 0:06 of 0:06 and seeking stopped at six seconds (2026-10-20).
+- The resolver already read `videoDetails.lengthSeconds` to score formats, then threw it away. `Resolved` now carries `duration_ms`, `CachedStream` keeps it, and `Actor::adopt_duration` gives it to a `yt:` row, whose length it is because the row names the video. Metadata rows keep their own length and only take one when they have none. The header feeds a length only when nothing else knows one; a header more than 5 s off is logged and never kept. The resolve log now prints the length it found, and `learn_duration` writes a played song's length into the library, so one play fixes the tables.
+- Verified on the PC on 2026-10-20: `play-search` resolved the song at 305 s and the bar read 0:12 of 5:05.
 
 ### 3.3 Search behavior (Apple parity, done)
 - Typing updates only the suggestion panel; the results page keeps its last committed query and loads on Enter or on clicking a row (song plays, artist/album/playlist opens, keyword runs the search).
@@ -146,6 +148,8 @@ Behavior implemented in `src/ui/island.rs` + wiring:
 ## 8. Recent commits (newest first, at handoff plus the 2026-10-20 follow-up)
 
 ```
+f73e658 Take the song's length from the video, not its first fragment
+6a9b57c Say in the handoff that the engine has one backend
 aa3d529 Put the formatter's lines where it asked
 5947f69 Keep only the engine that lives in this process
 339ec12 Hand the session over: the island, the engine, and the way the box works
