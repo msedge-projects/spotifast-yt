@@ -13693,16 +13693,16 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = test_app("island-minimized");
         app.attach(&ctx);
-        let input = egui::RawInput {
-            viewports: std::collections::HashMap::from([(
-                egui::ViewportId::ROOT,
-                egui::ViewportInfo {
-                    minimized: Some(true),
-                    ..Default::default()
-                },
-            )]),
-            ..Default::default()
-        };
+        let mut input = egui::RawInput::default();
+        // egui keys viewports with its own hasher, so the map is made by
+        // default and filled, rather than named here.
+        input.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo {
+                minimized: Some(true),
+                ..Default::default()
+            },
+        );
         let output = ctx.run_logic(&input, |ctx| app.background_frame(ctx));
         assert!(app.island_window, "the island takes over");
         assert!(app.switch_intent, "and replaces the window");
