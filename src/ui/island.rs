@@ -226,6 +226,13 @@ pub struct IslandState {
 }
 
 impl IslandState {
+    /// A new island window has its own place: the one before it was parked
+    /// by its own frame, and a replacement must be parked again rather than
+    /// trust that.
+    pub(crate) fn forget_placement(&mut self) {
+        self.placed = false;
+    }
+
     /// The pill, fully settled, for a screenshot.
     pub fn settle_pill(&mut self) {
         self.visible = true;

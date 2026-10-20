@@ -1233,6 +1233,11 @@ impl App {
         self.hide_intent = false;
         self.wants_show = false;
         self.switch_intent = false;
+        // A replaced island window opens where the window manager left it,
+        // so it is parked again by its own first frame.
+        if self.island_window {
+            self.island.forget_placement();
+        }
         self.winamp_level_reassert = 0;
         // A new window starts titled "Musify"; name the playing song
         // again rather than trust what the replaced window was told.

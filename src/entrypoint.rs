@@ -691,6 +691,13 @@ pub(crate) fn run() -> eframe::Result<()> {
                         Err(_) => 0,
                     }
                 };
+                // The island is a bare floating pane: a caption style left on
+                // it costs a pixel of the client and lets Windows shift the
+                // window down, which cut its bottom edge.
+                #[cfg(windows)]
+                if app.island_window && window_hwnd != 0 {
+                    musify::window::strip_frame(window_hwnd);
+                }
                 #[cfg(windows)]
                 let thumbbar = {
                     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -1349,12 +1356,13 @@ impl Shell {
             app.note_input();
         }
         #[cfg(windows)]
-        if self.window_hwnd != 0 && !app.settings.winamp_window {
+        if self.window_hwnd != 0 && !app.settings.winamp_window && !app.island_window {
             // The title strip wears the Mica material where Windows 11 can
             // give it: the strip reads as glass and the app's own tint is
             // left off so it shows. Older Windows keeps the tint. The mini
-            // player has no title strip, and the material would paint its
-            // square window corners dark, so it is left alone.
+            // player and the island have no title strip, and the material
+            // would paint their square window corners dark, so they are left
+            // alone.
             if self.mica.is_none() {
                 let mica = musify::window::set_backdrop_mica(self.window_hwnd);
                 if mica {

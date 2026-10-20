@@ -56,6 +56,59 @@ pub fn set_backdrop_mica(hwnd: isize) -> bool {
     }
 }
 
+/// Takes the frame off a window that must be a bare surface, such as the
+/// island. A caption style that survives elsewhere (a surviving `WS_CAPTION`
+/// was seen on the island window) costs a pixel of the client and lets
+/// Windows keep the caption on screen by moving the window down, so the
+/// island sat low and its bottom edge was clipped.
+#[cfg(windows)]
+pub fn strip_frame(hwnd: isize) {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetWindowLongPtrW(hwnd: *mut core::ffi::c_void, index: i32) -> isize;
+        fn SetWindowLongPtrW(hwnd: *mut core::ffi::c_void, index: i32, value: isize) -> isize;
+        fn SetWindowPos(
+            hwnd: *mut core::ffi::c_void,
+            after: *mut core::ffi::c_void,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
+    }
+    const GWL_STYLE: i32 = -16;
+    const WS_CAPTION: isize = 0x00C0_0000;
+    const WS_THICKFRAME: isize = 0x0004_0000;
+    const WS_SYSMENU: isize = 0x0008_0000;
+    const WS_MINIMIZEBOX: isize = 0x0002_0000;
+    const WS_MAXIMIZEBOX: isize = 0x0001_0000;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+    unsafe {
+        let window = hwnd as *mut core::ffi::c_void;
+        let style = GetWindowLongPtrW(window, GWL_STYLE);
+        let bare =
+            style & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+        if bare == style {
+            return;
+        }
+        SetWindowLongPtrW(window, GWL_STYLE, bare);
+        SetWindowPos(
+            window,
+            core::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
 /// Why a Wayland window cannot be kept above others from the app, and what
 /// to do instead.
 pub fn on_top_unavailable(locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
