@@ -13673,7 +13673,7 @@ mod tests {
     }
 
     /// The same, with modifiers held for the pass: the strip only wakes
-    /// while Alt is held.
+    /// while Alt is held. Modifiers reach egui as an event, not a field.
     fn draw_island_with(
         ctx: &egui::Context,
         app: &mut App,
@@ -13681,17 +13681,20 @@ mod tests {
         time: f64,
         modifiers: egui::Modifiers,
     ) -> egui::FullOutput {
-        let mut input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(260.0, 189.0),
-            )),
-            time: Some(time),
-            events,
-            ..Default::default()
-        };
-        input.modifiers = modifiers;
-        let mut output = ctx.run_ui(input, |ui| app.frame_ui(ui));
+        let mut events = events;
+        events.insert(0, egui::Event::ModifiersChanged(modifiers));
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(260.0, 189.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| app.frame_ui(ui),
+        );
         // The headed path uploads these; here they have nowhere to go.
         output.textures_delta.clear();
         output
