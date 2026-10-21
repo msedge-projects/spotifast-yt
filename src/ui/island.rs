@@ -322,9 +322,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         let scale = ctx.pixels_per_point();
         let shape = region_shape(app, now);
         if !app.island.region_set {
-            apply_region(app.window_hwnd, shape, scale);
-            app.island.region_shown = shape;
-            app.island.region_set = true;
+            // The first region is set only once a shape has been painted
+            // and presented: setting a region before Windows has drawn the
+            // window is a known source of a white flicker.
+            if app.island.region_pending != [0.0; 3] {
+                apply_region(app.window_hwnd, app.island.region_pending, scale);
+                app.island.region_shown = app.island.region_pending;
+                app.island.region_set = true;
+            }
         } else if app.island.region_pending != app.island.region_shown {
             apply_region(app.window_hwnd, app.island.region_pending, scale);
             app.island.region_shown = app.island.region_pending;

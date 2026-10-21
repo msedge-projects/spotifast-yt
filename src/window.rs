@@ -167,8 +167,11 @@ pub fn set_round_region(hwnd: isize, width: i32, height: i32, radius: i32) {
         // pixel wider and taller than the shape it must contain.
         let region = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius * 2, radius * 2);
         if !region.is_null() {
-            // The system owns the region once it is set.
-            SetWindowRgn(hwnd as *mut core::ffi::c_void, region, 1);
+            // The system owns the region once it is set. Redrawing is left
+            // to the next frame: redrawing on the spot paints the newly
+            // exposed edge from the surface the window still holds, which
+            // is the flash seen at the edge when the shape grows.
+            SetWindowRgn(hwnd as *mut core::ffi::c_void, region, 0);
         }
     }
 }
