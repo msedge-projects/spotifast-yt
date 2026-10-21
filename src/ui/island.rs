@@ -417,9 +417,13 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     }
     app.island.alt_prev = alt_down;
     // The strip only answers a pointer that is holding Alt: passing the top
-    // of the screen by accident must not bring the island out.
+    // of the screen by accident must not bring the island out. While the
+    // pointer rests on the strip the island keeps waking, so pressing Alt
+    // after arriving is noticed without moving the pointer again.
     if !app.island.visible && hovered && alt_down {
         app.island.visible = true;
+    } else if !app.island.visible && hovered {
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
     // Only a pointer that is still there starts the slide, so a fold is
     // never restarted by this.
