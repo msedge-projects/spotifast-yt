@@ -297,6 +297,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 close_card(app, now);
             } else {
                 open_card(app, now);
+                // A card the keyboard asked for stays until it is dismissed;
+                // it is not the pointer's to fold.
+                app.island.seen_at = f64::INFINITY;
             }
         } else {
             app.island.alt_at = now;
