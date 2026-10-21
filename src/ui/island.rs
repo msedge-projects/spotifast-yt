@@ -73,9 +73,6 @@ pub const CARD_SIZE: Vec2 = vec2(W, OPEN);
 const GRACE_S: f64 = 0.5;
 const CARD_GRACE_S: f64 = 0.7;
 const POINTER_PAD: f32 = 6.0;
-/// Frames on which a shape had to wait for its window, for one log line
-/// every couple of seconds instead of one per frame.
-static MISFIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The play mark's points, lucide's own: pause is a pair of bars, and
 /// play is that pair with the inner edges pulled to the middle. Wound
@@ -226,6 +223,9 @@ pub struct IslandState {
     was_saved: bool,
     /// When the pointer was last on the island, for the graces.
     seen_at: f64,
+    /// When Alt was last pressed alone, for the double press that opens
+    /// and closes the card from the keyboard.
+    alt_at: f64,
     /// Set once the window has been parked at the top of its monitor.
     placed: bool,
     /// The size last asked of the viewport.
@@ -284,6 +284,24 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         app.actions.push(Action::IslandToMain);
     }
     let now = ctx.input(|input| input.time);
+    // Two quick presses of Alt are the deliberate way in: they bring the
+    // island out if it is folded and open or close the card.
+    let alt = ctx.input(|input| {
+        input.key_pressed(egui::Key::AltLeft) || input.key_pressed(egui::Key::AltRight)
+    });
+    if alt {
+        if now - app.island.alt_at <= 0.4 {
+            app.island.alt_at = 0.0;
+            summon(app, now);
+            if app.island.open {
+                close_card(app, now);
+            } else {
+                open_card(app, now);
+            }
+        } else {
+            app.island.alt_at = now;
+        }
+    }
     let pointer = ctx.input(|input| input.pointer.latest_pos());
     let window = ui.max_rect();
     if !app.island.placed {
@@ -384,6 +402,15 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     }
 }
 
+/// Brings the pill out without the pointer, for the keyboard's own way in.
+fn summon(app: &mut App, now: f64) {
+    app.island.visible = true;
+    app.island.seen_at = now;
+    if app.island.appear.to < 1.0 {
+        app.island.appear.retarget(1.0, 0.32, Ease::Quart, now);
+    }
+}
+
 /// Opens the card.
 fn open_card(app: &mut App, now: f64) {
     let dur = BASE_MS / 1000.0 * rate(MORPH);
@@ -479,42 +506,35 @@ fn paint(app: &mut App, ui: &mut Ui, window: Rect, now: f64) {
             island.visible,
         )
     };
-    // A shape taller than the window would be cut at the window's edge, so
-    // it waits: the resize that gives the window its height is on its way.
-    // A shape taller than the window would be cut at the window's edge, so
-    // it waits: the resize that gives the window its height is on its way.
-    // This is checked only when something is actually drawn, so a resting
-    // strip (which is meant to be 8 points tall) is not reported.
-    if visible || appear > 0.001 {
-        let pane_height = mix(SHUT, OPEN, p);
-        if window.height() + 0.5 < pane_height {
-            let seen = MISFIT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if seen.is_multiple_of(60) {
-                log::warn!(
-                    "island: window {:?} is shorter than the pane's {}",
-                    window.size(),
-                    pane_height
-                );
-            }
-            return;
-        }
-    }
+    let palette = app.palette;
+    let pane = if palette.dark {
+        Color32::from_rgb(22, 24, 28)
+    } else {
+        Color32::from_rgb(250, 250, 250)
+    };
     if !visible && appear <= 0.001 {
         return;
     }
+    // The window can trail the shape for a frame while it resizes, and the
+    // freshly exposed rows would show the surface's white until the next
+    // pass. Covering the whole window in the pane's own colour makes the
+    // resize invisible; the shape then draws over it.
+    let pane_height = mix(SHUT, OPEN, p);
+    if (window.height() - pane_height).abs() > 0.5 {
+        let cover = Rect::from_min_size(window.min, vec2(W, window.height()));
+        let radius = mix(20.0, CORNER + PAD, p)
+            .min(window.height() / 2.0)
+            .round() as u8;
+        ui.painter().rect_filled(cover, radius, pane);
+        ui.ctx().request_repaint();
+    }
     let local = box_rect(appear, p, gather, open);
     let rect = local.translate(window.min.to_vec2());
-    let palette = app.palette;
 
     let hairline = if palette.dark {
         Color32::from_white_alpha(26)
     } else {
         Color32::from_black_alpha(18)
-    };
-    let pane = if palette.dark {
-        Color32::from_rgb(22, 24, 28)
-    } else {
-        Color32::from_rgb(250, 250, 250)
     };
     let fade = |c: Color32| c.gamma_multiply(clamp01(appear));
 

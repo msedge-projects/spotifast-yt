@@ -13719,6 +13719,34 @@ mod tests {
         app.backend.shutdown();
     }
 
+    /// Two quick presses of Alt bring the island out and open its card, and
+    /// two more close it: the deliberate way in, without the pointer.
+    #[test]
+    fn a_double_alt_opens_and_closes_the_card() {
+        let ctx = egui::Context::default();
+        let mut app = test_app("island-alt");
+        app.attach(&ctx);
+        app.island_window = true;
+        crate::demo::populate(&mut app);
+        draw_island(&ctx, &mut app, vec![], 1.0);
+        assert!(!app.island.visible);
+        let alt = |pressed: bool| egui::Event::Key {
+            key: egui::Key::AltLeft,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::ALT,
+        };
+        draw_island(&ctx, &mut app, vec![alt(true)], 2.0);
+        draw_island(&ctx, &mut app, vec![alt(true)], 2.1);
+        assert!(app.island.visible, "the island comes out");
+        assert!(app.island.open, "two Alt presses open the card");
+        draw_island(&ctx, &mut app, vec![alt(true)], 3.0);
+        draw_island(&ctx, &mut app, vec![alt(true)], 3.1);
+        assert!(!app.island.open, "two more close it");
+        app.backend.shutdown();
+    }
+
     /// The island wakes on hover, opens on a click, and its way-home
     /// button leaves for the main window.
     #[test]
