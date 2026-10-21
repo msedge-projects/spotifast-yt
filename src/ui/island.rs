@@ -69,6 +69,9 @@ const CARD_SIZE: Vec2 = vec2(W, OPEN);
 const GRACE_S: f64 = 0.5;
 const CARD_GRACE_S: f64 = 0.7;
 const POINTER_PAD: f32 = 6.0;
+/// Frames on which a shape had to wait for its window, for one log line
+/// every couple of seconds instead of one per frame.
+static MISFIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The play mark's points, lucide's own: pause is a pair of bars, and
 /// play is that pair with the inner edges pulled to the middle. Wound
@@ -279,6 +282,17 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     let now = ctx.input(|input| input.time);
     let pointer = ctx.input(|input| input.pointer.latest_pos());
     let window = ui.max_rect();
+    if !app.island.placed {
+        // One line per island window: what the drawing is told it has, and
+        // what the viewport believes, so a mismatch is visible in the log.
+        log::info!(
+            "island: ui {:?} clip {:?} screen {:?} inner {:?}",
+            window,
+            ui.clip_rect(),
+            ctx.screen_rect(),
+            ctx.input(|input| input.viewport().inner_rect),
+        );
+    }
     place_window(&ctx, app);
     step(app, &ctx, window, pointer, now);
     paint(app, ui, window, now);
@@ -454,6 +468,20 @@ fn paint(app: &mut App, ui: &mut Ui, window: Rect, now: f64) {
             island.visible,
         )
     };
+    // A shape taller than the window would be cut at the window's edge, so
+    // it waits: the resize that gives the window its height is on its way.
+    let pane_height = mix(SHUT, OPEN, p);
+    if window.height() + 0.5 < pane_height {
+        let seen = MISFIT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if seen % 60 == 0 {
+            log::warn!(
+                "island: window {:?} is shorter than the pane's {}",
+                window.size(),
+                pane_height
+            );
+        }
+        return;
+    }
     if !visible && appear <= 0.001 {
         return;
     }
