@@ -289,7 +289,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             "island: ui {:?} clip {:?} screen {:?} inner {:?}",
             window,
             ui.clip_rect(),
-            ctx.input(|input| input.screen_rect()),
+            ctx.viewport_rect(),
             ctx.input(|input| input.viewport().inner_rect),
         );
     }
