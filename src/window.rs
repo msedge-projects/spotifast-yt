@@ -62,7 +62,7 @@ pub fn set_backdrop_mica(hwnd: isize) -> bool {
 /// Windows keep the caption on screen by moving the window down, so the
 /// island sat low and its bottom edge was clipped.
 #[cfg(windows)]
-pub fn strip_frame(hwnd: isize) {
+pub fn strip_frame(hwnd: isize) -> bool {
     #[link(name = "user32")]
     unsafe extern "system" {
         fn GetWindowLongPtrW(hwnd: *mut core::ffi::c_void, index: i32) -> isize;
@@ -94,8 +94,9 @@ pub fn strip_frame(hwnd: isize) {
         let bare =
             style & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
         if bare == style {
-            return;
+            return false;
         }
+        log::info!("window {hwnd}: stripping the frame (style {style:#x} -> {bare:#x})");
         SetWindowLongPtrW(window, GWL_STYLE, bare);
         SetWindowPos(
             window,
@@ -106,6 +107,7 @@ pub fn strip_frame(hwnd: isize) {
             0,
             SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
+        true
     }
 }
 

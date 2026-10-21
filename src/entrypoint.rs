@@ -1407,6 +1407,18 @@ impl Shell {
             app.note_input();
         }
         #[cfg(windows)]
+        if app.island_window && self.window_hwnd != 0 {
+            // The island is a bare pane. A caption is put back on the window
+            // after it is created (it was observed with WS_CAPTION and a
+            // client a pixel below its outer rect), and a caption takes the
+            // pill's right and bottom edges. Clearing it every pass costs
+            // nothing once it is gone, and re-parks the window whenever the
+            // frame change moved it.
+            if musify::window::strip_frame(self.window_hwnd) {
+                app.island.forget_placement();
+            }
+        }
+        #[cfg(windows)]
         if self.window_hwnd != 0 && !app.settings.winamp_window && !app.island_window {
             // The title strip wears the Mica material where Windows 11 can
             // give it: the strip reads as glass and the app's own tint is
