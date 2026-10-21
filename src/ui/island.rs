@@ -412,7 +412,10 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     if hovered {
         app.island.seen_at = now;
     }
-    if !app.island.visible && hovered {
+    // The strip only answers a pointer that is holding Alt: passing the top
+    // of the screen by accident must not bring the island out.
+    let alt_down = ctx.input(|input| input.modifiers.alt);
+    if !app.island.visible && hovered && alt_down {
         app.island.visible = true;
     }
     // Only a pointer that is still there starts the slide, so a fold is

@@ -11875,9 +11875,10 @@ impl App {
     /// The soonest that playback, a pending play or polling needs the logic
     /// to run again, if any of them does.
     fn next_pass(&self) -> Option<Duration> {
-        let playing = self
-            .now_playing()
-            .is_some_and(|now| now.playing)
+        // A folded island shows no progress bar, so it does not need the
+        // playback clock's fast frames; polling and pending plays still do.
+        let folded_island = self.island_window && !self.island.visible;
+        let playing = (!folded_island && self.now_playing().is_some_and(|now| now.playing))
             .then_some(Duration::from_millis(250));
         let pending = self
             .any_play_pending()
@@ -13668,18 +13669,29 @@ mod tests {
         events: Vec<egui::Event>,
         time: f64,
     ) -> egui::FullOutput {
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(260.0, 189.0),
-                )),
-                time: Some(time),
-                events,
-                ..Default::default()
-            },
-            |ui| app.frame_ui(ui),
-        );
+        draw_island_with(ctx, app, events, time, egui::Modifiers::NONE)
+    }
+
+    /// The same, with modifiers held for the pass: the strip only wakes
+    /// while Alt is held.
+    fn draw_island_with(
+        ctx: &egui::Context,
+        app: &mut App,
+        events: Vec<egui::Event>,
+        time: f64,
+        modifiers: egui::Modifiers,
+    ) -> egui::FullOutput {
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(260.0, 189.0),
+            )),
+            time: Some(time),
+            events,
+            ..Default::default()
+        };
+        input.modifiers = modifiers;
+        let mut output = ctx.run_ui(input, |ui| app.frame_ui(ui));
         // The headed path uploads these; here they have nowhere to go.
         output.textures_delta.clear();
         output
@@ -13765,10 +13777,19 @@ mod tests {
         draw_island(&ctx, &mut app, vec![], 1.1);
         assert!(!app.island.visible, "the strip is quiet until found");
 
-        // The pointer finds the strip at the top center.
+        // The pointer finds the strip at the top center, but only while Alt
+        // is held: passing this part of the screen must not wake it.
         let strip = egui::pos2(130.0, 4.0);
-        draw_island(&ctx, &mut app, vec![egui::Event::PointerMoved(strip)], 2.0);
-        assert!(app.island.visible, "the strip wakes the pill");
+        draw_island(&ctx, &mut app, vec![egui::Event::PointerMoved(strip)], 1.9);
+        assert!(!app.island.visible, "plain hover leaves the strip quiet");
+        draw_island_with(
+            &ctx,
+            &mut app,
+            vec![egui::Event::PointerMoved(strip)],
+            2.0,
+            egui::Modifiers::ALT,
+        );
+        assert!(app.island.visible, "Alt and the strip wake the pill");
 
         // The pill is there; a click opens it.
         let at = egui::pos2(130.0, 40.0);
