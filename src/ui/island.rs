@@ -311,6 +311,20 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     // against the surface it already holds, so growing the region on the
     // same pass that paints the shape showed a frame of white; the surface
     // now already holds the shape's pixels when the region grows.
+    #[cfg(all(windows, not(test)))]
+    {
+        // Temporary: the pass rate tells whether the island is rendering
+        // continuously, which is what the resource use in Task Manager said.
+        static PASSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = PASSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n % 120 == 0 {
+            log::info!(
+                "island: pass {n} at {now:.2} visible={} open={}",
+                app.island.visible,
+                app.island.open
+            );
+        }
+    }
     #[cfg(windows)]
     if app.window_hwnd != 0 {
         if !app.island.transitions_off {
