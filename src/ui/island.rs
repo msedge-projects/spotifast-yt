@@ -473,7 +473,7 @@ fn paint(app: &mut App, ui: &mut Ui, window: Rect, now: f64) {
     let pane_height = mix(SHUT, OPEN, p);
     if window.height() + 0.5 < pane_height {
         let seen = MISFIT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if seen % 60 == 0 {
+        if seen.is_multiple_of(60) {
             log::warn!(
                 "island: window {:?} is shorter than the pane's {}",
                 window.size(),
