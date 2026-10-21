@@ -314,10 +314,17 @@ fn place_window(ctx: &egui::Context, app: &mut App) {
     };
     app.island.placed = true;
     // The virtual screen's primary monitor sits at the origin, which is
-    // where a single-monitor setup lives.
+    // where a single-monitor setup lives. On Windows the client area of a
+    // borderless window starts one pixel below its outer rectangle, so the
+    // window is parked one pixel higher: otherwise that row shows the
+    // desktop as a bright sliver above the pill.
+    #[cfg(windows)]
+    let top = -1.0;
+    #[cfg(not(windows))]
+    let top = 0.0;
     ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos2(
         (monitor.x - W) / 2.0,
-        0.0,
+        top,
     )));
 }
 
@@ -474,17 +481,23 @@ fn paint(app: &mut App, ui: &mut Ui, window: Rect, now: f64) {
     };
     // A shape taller than the window would be cut at the window's edge, so
     // it waits: the resize that gives the window its height is on its way.
-    let pane_height = mix(SHUT, OPEN, p);
-    if window.height() + 0.5 < pane_height {
-        let seen = MISFIT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if seen.is_multiple_of(60) {
-            log::warn!(
-                "island: window {:?} is shorter than the pane's {}",
-                window.size(),
-                pane_height
-            );
+    // A shape taller than the window would be cut at the window's edge, so
+    // it waits: the resize that gives the window its height is on its way.
+    // This is checked only when something is actually drawn, so a resting
+    // strip (which is meant to be 8 points tall) is not reported.
+    if visible || appear > 0.001 {
+        let pane_height = mix(SHUT, OPEN, p);
+        if window.height() + 0.5 < pane_height {
+            let seen = MISFIT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if seen.is_multiple_of(60) {
+                log::warn!(
+                    "island: window {:?} is shorter than the pane's {}",
+                    window.size(),
+                    pane_height
+                );
+            }
+            return;
         }
-        return;
     }
     if !visible && appear <= 0.001 {
         return;
