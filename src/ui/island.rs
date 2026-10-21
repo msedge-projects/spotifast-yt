@@ -62,8 +62,12 @@ const MORPH: f32 = 50.0;
 /// The resting strip: the whole window until the pointer finds it.
 pub const RESTING_SIZE: Vec2 = vec2(W, 8.0);
 /// The window's size with the pill visible, and with the card open.
-const PILL_SIZE: Vec2 = vec2(W, SHUT);
-const CARD_SIZE: Vec2 = vec2(W, OPEN);
+pub const PILL_SIZE: Vec2 = vec2(W, SHUT);
+/// The largest the window ever grows. The window is created with this as
+/// its maximum inner size: a maximum pinned to the resting strip makes
+/// Windows refuse every resize, which is what left the island 8 points
+/// tall while it tried to draw a 78-point pill.
+pub const CARD_SIZE: Vec2 = vec2(W, OPEN);
 /// How long the pointer may be away before each fold, and the room a
 /// hover keeps around the shape.
 const GRACE_S: f64 = 0.5;

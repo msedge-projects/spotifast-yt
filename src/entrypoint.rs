@@ -754,6 +754,11 @@ pub(crate) fn run() -> eframe::Result<()> {
 struct MiniWindow {
     /// A first size; the window corrects it once it knows the display.
     size: egui::Vec2,
+    /// The bounds a programmatic resize may move between. The island has
+    /// to grow from the strip to the card, so its maximum is the card's
+    /// size; the Winamp player keeps the size its skin asked for.
+    min_size: egui::Vec2,
+    max_size: egui::Vec2,
     /// Where it was. Only the position is used: the skin sets the size,
     /// and the mini player is never maximized.
     geometry: Geometry,
@@ -768,23 +773,31 @@ impl MiniWindow {
         // minimized: a strip at the top of the screen that wakes when
         // the pointer finds it.
         if app.island_window {
+            let size = musify::ui::island::wanted_size(&app.island);
             return Some(Self {
-                size: musify::ui::island::wanted_size(&app.island),
+                size,
+                min_size: musify::ui::island::RESTING_SIZE,
+                max_size: musify::ui::island::CARD_SIZE,
                 geometry: Geometry::default(),
                 on_top: true,
                 taskbar: false,
                 storage_path: app.dirs.cache.join("island.ron"),
             });
         }
-        app.settings.winamp_window.then(|| Self {
-            size: musify::ui::winamp::initial_size(&app.settings),
-            geometry: Geometry {
-                position: app.winamp.geometry.position,
-                ..Geometry::default()
-            },
-            on_top: app.settings.winamp_on_top,
-            taskbar: app.settings.winamp_show_taskbar,
-            storage_path: app.dirs.cache.join("winamp.ron"),
+        app.settings.winamp_window.then(|| {
+            let size = musify::ui::winamp::initial_size(&app.settings);
+            Self {
+                size,
+                min_size: size,
+                max_size: size,
+                geometry: Geometry {
+                    position: app.winamp.geometry.position,
+                    ..Geometry::default()
+                },
+                on_top: app.settings.winamp_on_top,
+                taskbar: app.settings.winamp_show_taskbar,
+                storage_path: app.dirs.cache.join("winamp.ron"),
+            }
         })
     }
 }
@@ -905,8 +918,8 @@ fn native_options(
                 .with_resizable(false)
                 .with_maximize_button(false)
                 .with_inner_size(mini.size)
-                .with_min_inner_size(mini.size)
-                .with_max_inner_size(mini.size)
+                .with_min_inner_size(mini.min_size)
+                .with_max_inner_size(mini.max_size)
                 .with_window_level(level);
             // egui applies this native attribute on Windows only; the app
             // creator asks X11 itself (window::skip_x11_taskbar).
@@ -1018,6 +1031,8 @@ mod native_window_tests {
             false,
             Some(MiniWindow {
                 size: egui::vec2(550.0, 232.0),
+                min_size: egui::vec2(550.0, 232.0),
+                max_size: egui::vec2(550.0, 232.0),
                 geometry: Geometry::default(),
                 on_top: false,
                 taskbar: true,
@@ -1078,6 +1093,8 @@ mod native_window_tests {
     fn the_mini_player_takes_only_its_position() {
         let mini = MiniWindow {
             size: egui::vec2(550.0, 232.0),
+            min_size: egui::vec2(550.0, 232.0),
+            max_size: egui::vec2(550.0, 232.0),
             geometry: Geometry {
                 size: Some([1100.0, 700.0]),
                 position: Some([300.0, 200.0]),
@@ -1091,6 +1108,32 @@ mod native_window_tests {
         assert_eq!(options.viewport.inner_size, Some(egui::vec2(550.0, 232.0)));
         assert_eq!(options.viewport.position, Some(egui::pos2(300.0, 200.0)));
         assert_eq!(options.viewport.maximized, None);
+    }
+
+    /// The island is born as the resting strip, but its window bounds must
+    /// allow the card: a maximum pinned to the strip made Windows refuse
+    /// every resize, so the pill was drawn into an 8-point window.
+    #[test]
+    fn the_island_window_may_grow_to_the_card() {
+        let mini = MiniWindow {
+            size: musify::ui::island::RESTING_SIZE,
+            min_size: musify::ui::island::RESTING_SIZE,
+            max_size: musify::ui::island::CARD_SIZE,
+            geometry: Geometry::default(),
+            on_top: true,
+            taskbar: false,
+            storage_path: "cache/island.ron".into(),
+        };
+        let options = native_options(false, Some(mini), None, Geometry::default());
+        assert_eq!(
+            options.viewport.inner_size,
+            Some(musify::ui::island::RESTING_SIZE)
+        );
+        assert_eq!(
+            options.viewport.max_inner_size,
+            Some(musify::ui::island::CARD_SIZE),
+            "the window must be allowed to grow to the card"
+        );
     }
 
     #[test]
@@ -1107,6 +1150,8 @@ mod native_window_tests {
                 false,
                 Some(MiniWindow {
                     size,
+                    min_size: size,
+                    max_size: size,
                     geometry: Geometry {
                         position: Some([300.0, 200.0]),
                         ..Geometry::default()
@@ -1152,6 +1197,8 @@ mod native_window_tests {
         );
         let mini = MiniWindow {
             size: egui::vec2(550.0, 232.0),
+            min_size: egui::vec2(550.0, 232.0),
+            max_size: egui::vec2(550.0, 232.0),
             geometry: Geometry::default(),
             on_top: false,
             taskbar: true,
@@ -1169,6 +1216,8 @@ mod native_window_tests {
         for taskbar in [false, true] {
             let mini = MiniWindow {
                 size: egui::vec2(550.0, 232.0),
+                min_size: egui::vec2(550.0, 232.0),
+                max_size: egui::vec2(550.0, 232.0),
                 geometry: Geometry {
                     position: Some([123.0, 456.0]),
                     ..Geometry::default()
@@ -1247,6 +1296,8 @@ mod native_window_tests {
             None,
             Some(MiniWindow {
                 size: egui::vec2(550.0, 232.0),
+                min_size: egui::vec2(550.0, 232.0),
+                max_size: egui::vec2(550.0, 232.0),
                 geometry: Geometry::default(),
                 on_top: false,
                 taskbar: true,
