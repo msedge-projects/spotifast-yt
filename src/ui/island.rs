@@ -336,7 +336,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             4.0
         };
         let scale = ctx.pixels_per_point();
-        musify::window::set_round_region(
+        crate::window::set_round_region(
             app.window_hwnd,
             (W * scale).round() as i32,
             (height * scale).round() as i32,
