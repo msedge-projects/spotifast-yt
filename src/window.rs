@@ -3,6 +3,32 @@
 //! eframe already places the window on-screen. The session can still refer
 //! to a monitor that was unplugged, so check before moving the window there.
 
+/// Turns DWM's window transitions off for a window. They animate a freshly
+/// shown or reshaped surface, and for a surface the app paints itself that
+/// animation is a white flash.
+#[cfg(windows)]
+pub fn disable_transitions(hwnd: isize) {
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: *mut core::ffi::c_void,
+            attribute: u32,
+            value: *const core::ffi::c_void,
+            size: u32,
+        ) -> i32;
+    }
+    const DWMWA_TRANSITIONS_FORCEDISABLED: u32 = 3;
+    let disabled: i32 = 1;
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd as *mut core::ffi::c_void,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            (&disabled as *const i32).cast(),
+            core::mem::size_of::<i32>() as u32,
+        );
+    }
+}
+
 /// Paints the system title bar with the window's own tint (Windows 11; the
 /// call fails harmlessly where unsupported), so the chrome reads as part of
 /// the app instead of a band over it.

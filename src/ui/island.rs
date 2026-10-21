@@ -219,9 +219,18 @@ pub struct IslandState {
     was_saved: bool,
     /// When the pointer was last on the island, for the graces.
     seen_at: f64,
-    /// Whether the pointer was on the island on the last pass, to focus the
-    /// window when it arrives (Alt presses only reach a focused window).
-    hovered: bool,
+    /// The window region currently applied, and the one the last painted
+    /// pass asked for. The applied region trails the shape by one pass so
+    /// the surface already holds the newer pixels when it grows.
+    #[cfg(windows)]
+    region_set: bool,
+    #[cfg(windows)]
+    region_shown: [f32; 3],
+    #[cfg(windows)]
+    region_pending: [f32; 3],
+    /// Whether DWM's window transitions were turned off for this window.
+    #[cfg(windows)]
+    transitions_off: bool,
     /// When Alt was last pressed alone, for the double press that opens
     /// and closes the card from the keyboard.
     alt_at: f64,
@@ -316,33 +325,56 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         );
     }
     place_window(&ctx, app);
-    step(app, &ctx, window, pointer, now);
-    paint(app, ui, window, now);
-    // The window keeps the card's size; its region is the shape. Setting
-    // the region after painting means the rows it adds already hold the
-    // shape's pixels, and clicks outside the shape reach the desktop.
+    // The window keeps the card's size; its region is the shape, and the
+    // region is applied one pass late. Windows composites a region change
+    // against the surface it already holds, so growing the region on the
+    // same pass that paints the shape showed a frame of white; the surface
+    // now already holds the shape's pixels when the region grows.
     #[cfg(windows)]
     if app.window_hwnd != 0 {
-        let p = app.island.morph.value(now);
-        let shown = app.island.visible || app.island.appear.value(now) > 0.001;
-        let height = if shown {
-            mix(SHUT, OPEN, p)
-        } else {
-            RESTING_SIZE.y
-        };
-        let radius = if shown {
-            mix(20.0, CORNER + PAD, p)
-        } else {
-            4.0
-        };
+        if !app.island.transitions_off {
+            // DWM's window transitions can also flash a freshly shown
+            // surface; the island has no use for them.
+            crate::window::disable_transitions(app.window_hwnd);
+            app.island.transitions_off = true;
+        }
         let scale = ctx.pixels_per_point();
-        crate::window::set_round_region(
-            app.window_hwnd,
-            (W * scale).round() as i32,
-            (height * scale).round() as i32,
-            (radius * scale).round() as i32,
-        );
+        let shape = region_shape(app, now);
+        if !app.island.region_set {
+            apply_region(app.window_hwnd, shape, scale);
+            app.island.region_shown = shape;
+            app.island.region_set = true;
+        } else if app.island.region_pending != app.island.region_shown {
+            apply_region(app.window_hwnd, app.island.region_pending, scale);
+            app.island.region_shown = app.island.region_pending;
+        }
+        app.island.region_pending = shape;
     }
+    step(app, &ctx, window, pointer, now);
+    paint(app, ui, window, now);
+}
+
+/// The window region the island's shape needs, in points: width, height and
+/// corner radius.
+#[cfg(windows)]
+fn region_shape(app: &App, now: f64) -> [f32; 3] {
+    let p = app.island.morph.value(now);
+    let shown = app.island.visible || app.island.appear.value(now) > 0.001;
+    if shown {
+        [W, mix(SHUT, OPEN, p), mix(20.0, CORNER + PAD, p)]
+    } else {
+        [W, RESTING_SIZE.y, 4.0]
+    }
+}
+
+#[cfg(windows)]
+fn apply_region(hwnd: isize, shape: [f32; 3], scale: f32) {
+    crate::window::set_round_region(
+        hwnd,
+        (shape[0] * scale).round() as i32,
+        (shape[1] * scale).round() as i32,
+        (shape[2] * scale).round() as i32,
+    );
 }
 
 /// Parks the window at the top center of its monitor, once the window
@@ -379,14 +411,7 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     let hovered = pointer.is_some_and(|p| zone.contains(p));
     if hovered {
         app.island.seen_at = now;
-        // Alt presses only reach a focused window, and the island is not
-        // the app's main window any more: give it focus when the pointer
-        // arrives, so the double Alt works without stealing focus first.
-        if !app.island.hovered {
-            ctx.send_viewport_cmd(ViewportCommand::Focus);
-        }
     }
-    app.island.hovered = hovered;
     if !app.island.visible && hovered {
         app.island.visible = true;
     }
