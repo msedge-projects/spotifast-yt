@@ -13673,7 +13673,7 @@ mod tests {
     }
 
     /// The same, with modifiers held for the pass: the strip only wakes
-    /// while Alt is held. Modifiers reach egui as an event, not a field.
+    /// while Control is held. Modifiers reach egui as an event, not a field.
     fn draw_island_with(
         ctx: &egui::Context,
         app: &mut App,
@@ -13738,32 +13738,6 @@ mod tests {
         app.backend.shutdown();
     }
 
-    /// Two quick presses of Alt bring the island out and open its card, and
-    /// two more close it: the deliberate way in, without the pointer.
-    #[test]
-    fn a_double_alt_opens_and_closes_the_card() {
-        let ctx = egui::Context::default();
-        let mut app = test_app("island-alt");
-        app.attach(&ctx);
-        app.island_window = true;
-        crate::demo::populate(&mut app);
-        draw_island(&ctx, &mut app, vec![], 1.0);
-        assert!(!app.island.visible);
-        let alt = egui::Modifiers::ALT;
-        let up = egui::Modifiers::NONE;
-        draw_island_with(&ctx, &mut app, vec![], 2.0, alt);
-        draw_island_with(&ctx, &mut app, vec![], 2.05, up);
-        draw_island_with(&ctx, &mut app, vec![], 2.1, alt);
-        assert!(app.island.visible, "the island comes out");
-        assert!(app.island.open, "two Alt presses open the card");
-        draw_island_with(&ctx, &mut app, vec![], 3.0, up);
-        draw_island_with(&ctx, &mut app, vec![], 3.05, alt);
-        draw_island_with(&ctx, &mut app, vec![], 3.1, up);
-        draw_island_with(&ctx, &mut app, vec![], 3.15, alt);
-        assert!(!app.island.open, "two more close it");
-        app.backend.shutdown();
-    }
-
     /// The island wakes on hover, opens on a click, and its way-home
     /// button leaves for the main window.
     #[test]
@@ -13778,29 +13752,29 @@ mod tests {
         draw_island(&ctx, &mut app, vec![], 1.1);
         assert!(!app.island.visible, "the strip is quiet until found");
 
-        // The pointer finds the strip at the top center, but only while Alt
-        // is held: passing this part of the screen must not wake it.
+        // The pointer finds the strip at the top center, but only while
+        // Control is held: passing this part of the screen must not wake it.
         let strip = egui::pos2(130.0, 4.0);
         let waiting = draw_island(&ctx, &mut app, vec![egui::Event::PointerMoved(strip)], 1.9);
         assert!(!app.island.visible, "plain hover leaves the strip quiet");
         // With the pointer on the strip the island keeps a slow pass going,
-        // so pressing Alt after arriving is noticed without moving again.
+        // so pressing Control after arriving is noticed without moving again.
         let repaint = waiting
             .viewport_output
             .get(&egui::ViewportId::ROOT)
             .map(|viewport| viewport.repaint_delay);
         assert!(
             repaint.is_some_and(|delay| delay <= std::time::Duration::from_millis(100)),
-            "the strip keeps checking for Alt: {repaint:?}"
+            "the strip keeps checking for Control: {repaint:?}"
         );
         draw_island_with(
             &ctx,
             &mut app,
             vec![egui::Event::PointerMoved(strip)],
             2.0,
-            egui::Modifiers::ALT,
+            egui::Modifiers::CTRL,
         );
-        assert!(app.island.visible, "Alt and the strip wake the pill");
+        assert!(app.island.visible, "Control and the strip wake the pill");
 
         // The pill is there; a click opens it.
         let at = egui::pos2(130.0, 40.0);

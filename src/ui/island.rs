@@ -231,11 +231,6 @@ pub struct IslandState {
     /// Whether DWM's window transitions were turned off for this window.
     #[cfg(windows)]
     transitions_off: bool,
-    /// When Alt was last pressed alone, for the double press that opens
-    /// and closes the card from the keyboard.
-    alt_at: f64,
-    /// Whether Alt was held on the last pass, to see the press edge.
-    alt_prev: bool,
     /// Set once the window has been parked at the top of its monitor.
     placed: bool,
 }
@@ -398,34 +393,15 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     if hovered {
         app.island.seen_at = now;
     }
-    // Alt is read from the keyboard itself where the platform allows it,
-    // because a modifier only arrives as an event when the window has
+    // Control is read from the keyboard itself where the platform allows
+    // it, because a modifier only arrives as an event when the window has
     // focus, and the island usually does not.
-    let alt_down = alt_held(ctx);
-    if alt_down && !app.island.alt_prev {
-        // A press edge: two presses in quick succession are the deliberate
-        // way in, and bring the island out if it is folded.
-        if now - app.island.alt_at <= 0.4 {
-            app.island.alt_at = 0.0;
-            summon(app, now);
-            if app.island.open {
-                close_card(app, now);
-            } else {
-                open_card(app, now);
-                // A card the keyboard asked for stays until it is dismissed;
-                // it is not the pointer's to fold.
-                app.island.seen_at = f64::INFINITY;
-            }
-        } else {
-            app.island.alt_at = now;
-        }
-    }
-    app.island.alt_prev = alt_down;
-    // The strip only answers a pointer that is holding Alt: passing the top
-    // of the screen by accident must not bring the island out. While the
-    // pointer rests on the strip the island keeps waking, so pressing Alt
-    // after arriving is noticed without moving the pointer again.
-    if !app.island.visible && hovered && alt_down {
+    let ctrl_down = ctrl_held(ctx);
+    // The strip only answers a pointer that is holding Control: passing the
+    // top of the screen by accident must not bring the island out. While the
+    // pointer rests on the strip the island keeps waking, so pressing
+    // Control after arriving is noticed without moving the pointer again.
+    if !app.island.visible && hovered && ctrl_down {
         app.island.visible = true;
     } else if !app.island.visible && hovered {
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -459,11 +435,11 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     }
 }
 
-/// Whether Alt is held, whether or not this window has the keyboard focus.
-/// A focused window reports it as a modifier; the island usually has no
-/// focus, so Windows is asked for the key's own state instead.
-fn alt_held(ctx: &egui::Context) -> bool {
-    if ctx.input(|input| input.modifiers.alt) {
+/// Whether Control is held, whether or not this window has the keyboard
+/// focus. A focused window reports it as a modifier; the island usually has
+/// no focus, so Windows is asked for the key's own state instead.
+fn ctrl_held(ctx: &egui::Context) -> bool {
+    if ctx.input(|input| input.modifiers.ctrl) {
         return true;
     }
     #[cfg(windows)]
@@ -472,22 +448,13 @@ fn alt_held(ctx: &egui::Context) -> bool {
         unsafe extern "system" {
             fn GetAsyncKeyState(key: i32) -> i16;
         }
-        const VK_MENU: i32 = 0x12;
+        const VK_CONTROL: i32 = 0x11;
         // The high bit is set while the key is down.
-        return unsafe { (GetAsyncKeyState(VK_MENU) as u16 & 0x8000) != 0 };
+        return unsafe { (GetAsyncKeyState(VK_CONTROL) as u16 & 0x8000) != 0 };
     }
     #[cfg(not(windows))]
     {
         false
-    }
-}
-
-/// Brings the pill out without the pointer, for the keyboard's own way in.
-fn summon(app: &mut App, now: f64) {
-    app.island.visible = true;
-    app.island.seen_at = now;
-    if app.island.appear.to < 1.0 {
-        app.island.appear.retarget(1.0, 0.32, Ease::Quart, now);
     }
 }
 
