@@ -13781,8 +13781,18 @@ mod tests {
         // The pointer finds the strip at the top center, but only while Alt
         // is held: passing this part of the screen must not wake it.
         let strip = egui::pos2(130.0, 4.0);
-        draw_island(&ctx, &mut app, vec![egui::Event::PointerMoved(strip)], 1.9);
+        let waiting = draw_island(&ctx, &mut app, vec![egui::Event::PointerMoved(strip)], 1.9);
         assert!(!app.island.visible, "plain hover leaves the strip quiet");
+        // With the pointer on the strip the island keeps a slow pass going,
+        // so pressing Alt after arriving is noticed without moving again.
+        let repaint = waiting
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map(|viewport| viewport.repaint_delay);
+        assert!(
+            repaint.is_some_and(|delay| delay <= std::time::Duration::from_millis(100)),
+            "the strip keeps checking for Alt: {repaint:?}"
+        );
         draw_island_with(
             &ctx,
             &mut app,
