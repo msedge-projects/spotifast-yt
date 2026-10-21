@@ -318,6 +318,9 @@ pub struct App {
     /// Whether the desktop asks for less motion.
     pub motion: crate::motion::Motion,
     pub window_hidden: bool,
+    /// The native handle of the window being drawn, for platform shaping
+    /// such as the island's window region.
+    pub window_hwnd: isize,
     /// The window should close but the process should stay in the tray.
     pub hide_intent: bool,
     /// The outer loop should recreate the hidden window.
@@ -933,6 +936,7 @@ impl App {
             screen_hz: 0,
             motion: crate::motion::Motion::default(),
             window_hidden: false,
+            window_hwnd: 0,
             hide_intent: false,
             wants_show: false,
             switch_intent: false,
@@ -13765,11 +13769,6 @@ mod tests {
         let strip = egui::pos2(130.0, 4.0);
         draw_island(&ctx, &mut app, vec![egui::Event::PointerMoved(strip)], 2.0);
         assert!(app.island.visible, "the strip wakes the pill");
-        assert_eq!(
-            app.island.asked,
-            egui::vec2(260.0, 78.0),
-            "the window becomes the pill's"
-        );
 
         // The pill is there; a click opens it.
         let at = egui::pos2(130.0, 40.0);
@@ -13778,11 +13777,6 @@ mod tests {
         draw_island(&ctx, &mut app, vec![island_press(at, false)], 2.15);
         assert!(app.island.open, "the pill opens the card");
         draw_island(&ctx, &mut app, vec![], 2.8);
-        assert_eq!(
-            app.island.asked,
-            egui::vec2(260.0, 189.0),
-            "the window becomes the card's"
-        );
 
         // The way home, at the end of the transport row.
         let box_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(260.0, 189.0));
@@ -13812,21 +13806,11 @@ mod tests {
         draw_island(&ctx, &mut app, vec![island_press(sleeve, true)], 1.11);
         draw_island(&ctx, &mut app, vec![island_press(sleeve, false)], 1.15);
         assert!(!app.island.open, "the sleeve folds the card");
-        assert_eq!(
-            app.island.asked,
-            egui::vec2(260.0, 189.0),
-            "the window holds until the morph lands"
-        );
         // The morph lands; the pill folds and the window comes down.
         draw_island(&ctx, &mut app, vec![], 2.0);
         draw_island(&ctx, &mut app, vec![egui::Event::PointerGone], 2.6);
         draw_island(&ctx, &mut app, vec![], 3.5);
-        assert_eq!(
-            app.island.asked,
-            egui::vec2(260.0, 8.0),
-            "back to the strip"
-        );
-        assert!(!app.island.visible);
+        assert!(!app.island.visible, "back to the strip");
         app.backend.shutdown();
     }
 

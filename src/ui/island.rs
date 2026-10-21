@@ -92,16 +92,12 @@ fn window_size_for(visible: bool, open: bool) -> Vec2 {
     }
 }
 
-/// Whether the window has grown enough to hold the pill. Until it has, the
-/// pill's pane is taller than the window and would be clipped at the
-/// bottom, which read as a cut-off shape while it slid in.
-fn has_pill_room(window_height: f32) -> bool {
-    window_height >= PILL_SIZE.y - 0.5
-}
-
-/// The size the window should be born with, for whoever creates it.
-pub fn wanted_size(state: &IslandState) -> Vec2 {
-    window_size_for(state.visible, state.open)
+/// The size the window should be born with, for whoever creates it. It is
+/// always the card's: the island changes its window region, not its size,
+/// because a resize makes Windows present a fresh surface for a frame and
+/// that frame is the white flash the user saw on every hover and click.
+pub fn wanted_size(_state: &IslandState) -> Vec2 {
+    CARD_SIZE
 }
 
 /// The morph's speed multiplier.
@@ -223,13 +219,14 @@ pub struct IslandState {
     was_saved: bool,
     /// When the pointer was last on the island, for the graces.
     seen_at: f64,
+    /// Whether the pointer was on the island on the last pass, to focus the
+    /// window when it arrives (Alt presses only reach a focused window).
+    hovered: bool,
     /// When Alt was last pressed alone, for the double press that opens
     /// and closes the card from the keyboard.
     alt_at: f64,
     /// Set once the window has been parked at the top of its monitor.
     placed: bool,
-    /// The size last asked of the viewport.
-    pub(crate) asked: Vec2,
 }
 
 impl IslandState {
@@ -321,6 +318,31 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     place_window(&ctx, app);
     step(app, &ctx, window, pointer, now);
     paint(app, ui, window, now);
+    // The window keeps the card's size; its region is the shape. Setting
+    // the region after painting means the rows it adds already hold the
+    // shape's pixels, and clicks outside the shape reach the desktop.
+    #[cfg(windows)]
+    if app.window_hwnd != 0 {
+        let p = app.island.morph.value(now);
+        let shown = app.island.visible || app.island.appear.value(now) > 0.001;
+        let height = if shown {
+            mix(SHUT, OPEN, p)
+        } else {
+            RESTING_SIZE.y
+        };
+        let radius = if shown {
+            mix(20.0, CORNER + PAD, p)
+        } else {
+            4.0
+        };
+        let scale = ctx.pixels_per_point();
+        musify::window::set_round_region(
+            app.window_hwnd,
+            (W * scale).round() as i32,
+            (height * scale).round() as i32,
+            (radius * scale).round() as i32,
+        );
+    }
 }
 
 /// Parks the window at the top center of its monitor, once the window
@@ -357,16 +379,20 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     let hovered = pointer.is_some_and(|p| zone.contains(p));
     if hovered {
         app.island.seen_at = now;
+        // Alt presses only reach a focused window, and the island is not
+        // the app's main window any more: give it focus when the pointer
+        // arrives, so the double Alt works without stealing focus first.
+        if !app.island.hovered {
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
+        }
     }
+    app.island.hovered = hovered;
     if !app.island.visible && hovered {
         app.island.visible = true;
     }
-    // The window grows before the pill may slide in: drawing a 78-point
-    // pane into the resting strip's 8-point window clipped its sides while
-    // the resize was still on its way. Only a pointer that is still there
-    // starts the slide, so a fold is never restarted by this.
-    if hovered && app.island.visible && app.island.appear.to < 1.0 && has_pill_room(window.height())
-    {
+    // Only a pointer that is still there starts the slide, so a fold is
+    // never restarted by this.
+    if hovered && app.island.visible && app.island.appear.to < 1.0 {
         app.island.appear.retarget(1.0, 0.32, Ease::Quart, now);
     }
 
@@ -379,20 +405,6 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     }
     if app.island.open && away > CARD_GRACE_S {
         close_card(app, now);
-    }
-
-    // The window only resizes between shapes, never during the morph.
-    let size = window_size_for(app.island.visible, app.island.open);
-    if app.island.asked != size {
-        let growing = size.y > app.island.asked.y;
-        let quiet = app.island.morph.value(now) <= 0.001
-            && (size == PILL_SIZE || app.island.appear.value(now) <= 0.001);
-        if growing || quiet {
-            app.island.asked = size;
-            ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(size));
-            ctx.send_viewport_cmd(ViewportCommand::MaxInnerSize(size));
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
-        }
     }
 
     let moving = !app.island.appear.settled(now)
@@ -517,19 +529,6 @@ fn paint(app: &mut App, ui: &mut Ui, window: Rect, now: f64) {
     };
     if !visible && appear <= 0.001 {
         return;
-    }
-    // The window can trail the shape for a frame while it resizes, and the
-    // freshly exposed rows would show the surface's white until the next
-    // pass. Covering the whole window in the pane's own colour makes the
-    // resize invisible; the shape then draws over it.
-    let pane_height = mix(SHUT, OPEN, p);
-    if (window.height() - pane_height).abs() > 0.5 {
-        let cover = Rect::from_min_size(window.min, vec2(W, window.height()));
-        let radius = mix(20.0, CORNER + PAD, p)
-            .min(window.height() / 2.0)
-            .round() as u8;
-        ui.painter().rect_filled(cover, radius, pane);
-        ui.ctx().request_repaint();
     }
     let local = box_rect(appear, p, gather, open);
     let rect = local.translate(window.min.to_vec2());
@@ -874,14 +873,6 @@ mod tests {
         assert!((rate(50.0) - 1.0).abs() < 1e-6, "50 is the tuned 460 ms");
         assert!((rate(0.0) - 1.6).abs() < 1e-6);
         assert!((rate(100.0) - 0.4).abs() < 1e-6);
-    }
-
-    #[test]
-    fn the_pill_waits_for_a_window_tall_enough_to_hold_it() {
-        // The strip's own window would clip a pill drawn into it.
-        assert!(!has_pill_room(RESTING_SIZE.y));
-        assert!(!has_pill_room(PILL_SIZE.y - 1.0));
-        assert!(has_pill_room(PILL_SIZE.y));
     }
 
     #[test]

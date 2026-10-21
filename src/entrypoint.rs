@@ -776,7 +776,7 @@ impl MiniWindow {
             let size = musify::ui::island::wanted_size(&app.island);
             return Some(Self {
                 size,
-                min_size: musify::ui::island::RESTING_SIZE,
+                min_size: musify::ui::island::CARD_SIZE,
                 max_size: musify::ui::island::CARD_SIZE,
                 geometry: Geometry::default(),
                 on_top: true,
@@ -1110,14 +1110,15 @@ mod native_window_tests {
         assert_eq!(options.viewport.maximized, None);
     }
 
-    /// The island is born as the resting strip, but its window bounds must
-    /// allow the card: a maximum pinned to the strip made Windows refuse
-    /// every resize, so the pill was drawn into an 8-point window.
+    /// The island window is the card's size for its whole life. It is
+    /// shaped by a window region instead of by resizing, because a resize
+    /// makes Windows show a fresh surface for a frame, which is the white
+    /// flash.
     #[test]
-    fn the_island_window_may_grow_to_the_card() {
+    fn the_island_window_is_born_at_the_cards_size() {
         let mini = MiniWindow {
-            size: musify::ui::island::RESTING_SIZE,
-            min_size: musify::ui::island::RESTING_SIZE,
+            size: musify::ui::island::CARD_SIZE,
+            min_size: musify::ui::island::CARD_SIZE,
             max_size: musify::ui::island::CARD_SIZE,
             geometry: Geometry::default(),
             on_top: true,
@@ -1127,12 +1128,12 @@ mod native_window_tests {
         let options = native_options(false, Some(mini), None, Geometry::default());
         assert_eq!(
             options.viewport.inner_size,
-            Some(musify::ui::island::RESTING_SIZE)
+            Some(musify::ui::island::CARD_SIZE)
         );
         assert_eq!(
             options.viewport.max_inner_size,
             Some(musify::ui::island::CARD_SIZE),
-            "the window must be allowed to grow to the card"
+            "the window is never resized: its region is the shape"
         );
     }
 
@@ -1401,6 +1402,12 @@ impl Shell {
         }
         self.read_screen_hz(ctx, frame);
         let app = &mut *self.app;
+        // The island shapes its window with a region, which needs the
+        // native handle.
+        #[cfg(windows)]
+        {
+            app.window_hwnd = self.window_hwnd;
+        }
         // Any input keeps the visualizers at the chosen rate; their idle
         // walk-down lives in App::visualiser_fps.
         if ctx.input(|i| !i.events.is_empty()) {

@@ -111,6 +111,42 @@ pub fn strip_frame(hwnd: isize) -> bool {
     }
 }
 
+/// Shapes a window to a rounded rectangle, in pixels. The island keeps one
+/// window size and changes this region instead of resizing: a resize makes
+/// Windows present a fresh surface for a frame, which shows as a white
+/// flash, and a region also keeps clicks outside the shape on the desktop.
+#[cfg(windows)]
+pub fn set_round_region(hwnd: isize, width: i32, height: i32, radius: i32) {
+    #[link(name = "gdi32")]
+    unsafe extern "system" {
+        fn CreateRoundRectRgn(
+            left: i32,
+            top: i32,
+            right: i32,
+            bottom: i32,
+            ellipse_width: i32,
+            ellipse_height: i32,
+        ) -> *mut core::ffi::c_void;
+    }
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn SetWindowRgn(hwnd: *mut core::ffi::c_void, region: *mut core::ffi::c_void, redraw: i32)
+        -> i32;
+    }
+    let width = width.max(1);
+    let height = height.max(1);
+    let radius = radius.max(0).min(width / 2).min(height / 2);
+    unsafe {
+        // The right and bottom edges are exclusive, so the region is one
+        // pixel wider and taller than the shape it must contain.
+        let region = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius * 2, radius * 2);
+        if !region.is_null() {
+            // The system owns the region once it is set.
+            SetWindowRgn(hwnd as *mut core::ffi::c_void, region, 1);
+        }
+    }
+}
+
 /// Why a Wayland window cannot be kept above others from the app, and what
 /// to do instead.
 pub fn on_top_unavailable(locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
