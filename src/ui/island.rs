@@ -234,6 +234,8 @@ pub struct IslandState {
     /// When Alt was last pressed alone, for the double press that opens
     /// and closes the card from the keyboard.
     alt_at: f64,
+    /// Whether Alt was held on the last pass, to see the press edge.
+    alt_prev: bool,
     /// Set once the window has been parked at the top of its monitor.
     placed: bool,
 }
@@ -290,27 +292,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         app.actions.push(Action::IslandToMain);
     }
     let now = ctx.input(|input| input.time);
-    // Two quick presses of Alt are the deliberate way in: they bring the
-    // island out if it is folded and open or close the card.
-    let alt = ctx.input(|input| {
-        input.key_pressed(egui::Key::AltLeft) || input.key_pressed(egui::Key::AltRight)
-    });
-    if alt {
-        if now - app.island.alt_at <= 0.4 {
-            app.island.alt_at = 0.0;
-            summon(app, now);
-            if app.island.open {
-                close_card(app, now);
-            } else {
-                open_card(app, now);
-                // A card the keyboard asked for stays until it is dismissed;
-                // it is not the pointer's to fold.
-                app.island.seen_at = f64::INFINITY;
-            }
-        } else {
-            app.island.alt_at = now;
-        }
-    }
     let pointer = ctx.input(|input| input.pointer.latest_pos());
     let window = ui.max_rect();
     if !app.island.placed {
@@ -412,9 +393,31 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
     if hovered {
         app.island.seen_at = now;
     }
+    // Alt is read from the keyboard itself where the platform allows it,
+    // because a modifier only arrives as an event when the window has
+    // focus, and the island usually does not.
+    let alt_down = alt_held(ctx);
+    if alt_down && !app.island.alt_prev {
+        // A press edge: two presses in quick succession are the deliberate
+        // way in, and bring the island out if it is folded.
+        if now - app.island.alt_at <= 0.4 {
+            app.island.alt_at = 0.0;
+            summon(app, now);
+            if app.island.open {
+                close_card(app, now);
+            } else {
+                open_card(app, now);
+                // A card the keyboard asked for stays until it is dismissed;
+                // it is not the pointer's to fold.
+                app.island.seen_at = f64::INFINITY;
+            }
+        } else {
+            app.island.alt_at = now;
+        }
+    }
+    app.island.alt_prev = alt_down;
     // The strip only answers a pointer that is holding Alt: passing the top
     // of the screen by accident must not bring the island out.
-    let alt_down = ctx.input(|input| input.modifiers.alt);
     if !app.island.visible && hovered && alt_down {
         app.island.visible = true;
     }
@@ -442,6 +445,29 @@ fn step(app: &mut App, ctx: &egui::Context, window: Rect, pointer: Option<Pos2>,
         || !app.island.beat.settled(now);
     if moving {
         ctx.request_repaint();
+    }
+}
+
+/// Whether Alt is held, whether or not this window has the keyboard focus.
+/// A focused window reports it as a modifier; the island usually has no
+/// focus, so Windows is asked for the key's own state instead.
+fn alt_held(ctx: &egui::Context) -> bool {
+    if ctx.input(|input| input.modifiers.alt) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn GetAsyncKeyState(key: i32) -> i16;
+        }
+        const VK_MENU: i32 = 0x12;
+        // The high bit is set while the key is down.
+        return unsafe { (GetAsyncKeyState(VK_MENU) as u16 & 0x8000) != 0 };
+    }
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 

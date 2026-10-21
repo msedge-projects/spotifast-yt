@@ -13749,19 +13749,17 @@ mod tests {
         crate::demo::populate(&mut app);
         draw_island(&ctx, &mut app, vec![], 1.0);
         assert!(!app.island.visible);
-        let alt = |pressed: bool| egui::Event::Key {
-            key: egui::Key::AltLeft,
-            physical_key: None,
-            pressed,
-            repeat: false,
-            modifiers: egui::Modifiers::ALT,
-        };
-        draw_island(&ctx, &mut app, vec![alt(true)], 2.0);
-        draw_island(&ctx, &mut app, vec![alt(true)], 2.1);
+        let alt = egui::Modifiers::ALT;
+        let up = egui::Modifiers::NONE;
+        draw_island_with(&ctx, &mut app, vec![], 2.0, alt);
+        draw_island_with(&ctx, &mut app, vec![], 2.05, up);
+        draw_island_with(&ctx, &mut app, vec![], 2.1, alt);
         assert!(app.island.visible, "the island comes out");
         assert!(app.island.open, "two Alt presses open the card");
-        draw_island(&ctx, &mut app, vec![alt(true)], 3.0);
-        draw_island(&ctx, &mut app, vec![alt(true)], 3.1);
+        draw_island_with(&ctx, &mut app, vec![], 3.0, up);
+        draw_island_with(&ctx, &mut app, vec![], 3.05, alt);
+        draw_island_with(&ctx, &mut app, vec![], 3.1, up);
+        draw_island_with(&ctx, &mut app, vec![], 3.15, alt);
         assert!(!app.island.open, "two more close it");
         app.backend.shutdown();
     }
