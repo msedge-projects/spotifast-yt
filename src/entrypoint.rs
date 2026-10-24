@@ -780,7 +780,10 @@ impl MiniWindow {
                 max_size: musify::ui::island::CARD_SIZE,
                 geometry: Geometry::default(),
                 on_top: true,
-                taskbar: false,
+                // The main window closes for the island, so the island is
+                // the app's only window while it is minimized: it keeps the
+                // taskbar button, or the app would vanish from the taskbar.
+                taskbar: true,
                 storage_path: app.dirs.cache.join("island.ron"),
             });
         }
