@@ -316,7 +316,13 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         }
         let scale = ctx.pixels_per_point();
         let shape = region_shape(app, now);
-        if !app.island.region_set {
+        if app.island.region_set && shape[1] < app.island.region_shown[1] {
+            // A shrinking region cannot expose a row, so it is safe to
+            // apply at once: the fold moves the pane up and the region must
+            // follow it or the empty top stays inside the window.
+            apply_region(app.window_hwnd, shape, scale);
+            app.island.region_shown = shape;
+        } else if !app.island.region_set {
             // The first region is set only once a shape has been painted
             // and presented: setting a region before Windows has drawn the
             // window is a known source of a white flicker.
@@ -336,13 +342,19 @@ pub fn show(app: &mut App, ui: &mut Ui) {
 }
 
 /// The window region the island's shape needs, in points: width, height and
-/// corner radius.
+/// corner radius. While the pill slides in or out, the region follows the
+/// pane's visible bottom, not its full height: the fold lifts the pane up,
+/// and a region that kept the full height left an empty strip at the top of
+/// the window, which flashed white as it composed.
 #[cfg(windows)]
 fn region_shape(app: &App, now: f64) -> [f32; 3] {
     let p = app.island.morph.value(now);
-    let shown = app.island.visible || app.island.appear.value(now) > 0.001;
+    let appear = app.island.appear.value(now);
+    let shown = app.island.visible || appear > 0.001;
     if shown {
-        [W, mix(SHUT, OPEN, p), mix(20.0, CORNER + PAD, p)]
+        let lift = (appear - 1.0) * (SHUT + 12.0);
+        let height = (lift + mix(SHUT, OPEN, p)).max(RESTING_SIZE.y);
+        [W, height, mix(20.0, CORNER + PAD, p)]
     } else {
         [W, RESTING_SIZE.y, 4.0]
     }
