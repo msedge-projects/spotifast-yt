@@ -11694,6 +11694,18 @@ impl App {
         if self.hand_over_to_island(ctx) {
             return;
         }
+        // The island carries the taskbar button while the app is minimized.
+        // A click there minimizes the island window, which is the user
+        // asking for the app back. A minimized window never draws, so this
+        // is checked here, in the logic, not in the island's frame.
+        if self.island_window
+            && !self.switch_intent
+            && ctx.input(|input| input.viewport().minimized == Some(true))
+        {
+            self.actions.push(Action::IslandToMain);
+            ctx.request_repaint();
+            return;
+        }
         if self.autoscroll.cancel_if_unfocused(ctx) {
             self.scrolling.stop();
         }
