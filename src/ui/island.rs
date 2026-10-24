@@ -286,6 +286,12 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
         app.actions.push(Action::IslandToMain);
     }
+    // The island carries the taskbar button while the app is minimized. A
+    // click there minimises the island window, which is the user asking for
+    // the app back, not for a 260-point strip to fold away.
+    if ctx.input(|input| input.viewport().minimized == Some(true)) && !app.switch_intent {
+        app.actions.push(Action::IslandToMain);
+    }
     let now = ctx.input(|input| input.time);
     let pointer = ctx.input(|input| input.pointer.latest_pos());
     let window = ui.max_rect();
