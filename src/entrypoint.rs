@@ -1424,6 +1424,11 @@ impl Shell {
             if musify::window::strip_frame(self.window_hwnd) {
                 app.island.forget_placement();
             }
+            // The island must never take the keyboard focus: Windows
+            // repaints a window white for a frame when it enters or leaves
+            // activation, which is the flash seen on the click that opens
+            // the card and on the click that leaves it.
+            musify::window::no_activate(self.window_hwnd);
         }
         #[cfg(windows)]
         if self.window_hwnd != 0 && !app.settings.winamp_window && !app.island_window {

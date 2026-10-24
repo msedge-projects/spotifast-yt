@@ -137,6 +137,55 @@ pub fn strip_frame(hwnd: isize) -> bool {
     }
 }
 
+/// Keeps a window from ever becoming the foreground window, so clicking it
+/// does not take focus from the app the user is working in. Windows repaints
+/// such a window white for a frame on the way in and out of activation,
+/// which is the flash seen when the island is clicked and when the desktop
+/// is clicked afterwards. Returns whether the style changed.
+#[cfg(windows)]
+pub fn no_activate(hwnd: isize) -> bool {
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn GetWindowLongPtrW(hwnd: *mut core::ffi::c_void, index: i32) -> isize;
+        fn SetWindowLongPtrW(hwnd: *mut core::ffi::c_void, index: i32, value: isize) -> isize;
+        fn SetWindowPos(
+            hwnd: *mut core::ffi::c_void,
+            after: *mut core::ffi::c_void,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
+    }
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_EX_NOACTIVATE: isize = 0x0800_0000;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+    unsafe {
+        let window = hwnd as *mut core::ffi::c_void;
+        let style = GetWindowLongPtrW(window, GWL_EXSTYLE);
+        if style & WS_EX_NOACTIVATE != 0 {
+            return false;
+        }
+        log::info!("window {hwnd}: never activating (exstyle {style:#x})");
+        SetWindowLongPtrW(window, GWL_EXSTYLE, style | WS_EX_NOACTIVATE);
+        SetWindowPos(
+            window,
+            core::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+        true
+    }
+}
+
 /// Shapes a window to a rounded rectangle, in pixels. The island keeps one
 /// window size and changes this region instead of resizing: a resize makes
 /// Windows present a fresh surface for a frame, which shows as a white
