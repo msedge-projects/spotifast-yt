@@ -1432,6 +1432,10 @@ impl Shell {
             // activation, which is the flash seen on the click that opens
             // the card and on the click that leaves it.
             musify::window::no_activate(self.window_hwnd);
+            // The island carries the taskbar button; watch for the shell
+            // asking it to minimize, restore or close, which the app turns
+            // into a return to its main window.
+            musify::window::watch_restore_request(self.window_hwnd);
         }
         #[cfg(windows)]
         if self.window_hwnd != 0 && !app.settings.winamp_window && !app.island_window {

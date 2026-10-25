@@ -186,6 +186,77 @@ pub fn no_activate(hwnd: isize) -> bool {
     }
 }
 
+/// Set by the island window's own procedure when the shell or taskbar asks
+/// it to be minimized, restored or closed. The island carries the app's
+/// taskbar button, so a click there arrives as one of those messages, and
+/// the app reads this to return to the main window.
+#[cfg(windows)]
+pub static RESTORE_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Whether a restore request has arrived since the last call, clearing it.
+#[cfg(windows)]
+pub fn took_restore_request() -> bool {
+    RESTORE_REQUESTED.swap(false, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Watches a window for the shell or taskbar asking it to be minimized,
+/// restored or closed. A taskbar click on the island's button arrives as
+/// `WM_SYSCOMMAND` with one of those verbs, and must open the main window
+/// rather than act on the 260-point island.
+#[cfg(windows)]
+pub fn watch_restore_request(hwnd: isize) {
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    // Each island window is a new HWND, so the hook is installed per window
+    // rather than once per process.
+    static HOOKED: AtomicIsize = AtomicIsize::new(0);
+    static OLD_PROC: AtomicIsize = AtomicIsize::new(0);
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn SetWindowLongPtrW(hwnd: *mut core::ffi::c_void, index: i32, value: isize) -> isize;
+        fn CallWindowProcW(
+            prev: *mut core::ffi::c_void,
+            hwnd: *mut core::ffi::c_void,
+            msg: u32,
+            wparam: usize,
+            lparam: isize,
+        ) -> isize;
+    }
+    const GWLP_WNDPROC: i32 = -4;
+    const WM_SYSCOMMAND: u32 = 0x0112;
+    const WM_ACTIVATEAPP: u32 = 0x001C;
+    const SC_MINIMIZE: usize = 0xF020;
+    const SC_RESTORE: usize = 0xF120;
+    const SC_CLOSE: usize = 0xF060;
+    unsafe extern "system" fn proc(
+        hwnd: *mut core::ffi::c_void,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> isize {
+        if msg == WM_ACTIVATEAPP
+            || (msg == WM_SYSCOMMAND && matches!(wparam, SC_MINIMIZE | SC_RESTORE | SC_CLOSE))
+        {
+            crate::window::RESTORE_REQUESTED.store(true, Ordering::Relaxed);
+        }
+        CallWindowProcW(
+            OLD_PROC.load(Ordering::Relaxed) as *mut core::ffi::c_void,
+            hwnd,
+            msg,
+            wparam,
+            lparam,
+        )
+    }
+    unsafe {
+        if HOOKED.load(Ordering::Relaxed) == hwnd {
+            return;
+        }
+        let old = SetWindowLongPtrW(hwnd as *mut core::ffi::c_void, GWLP_WNDPROC, proc as isize);
+        OLD_PROC.store(old, Ordering::Relaxed);
+        HOOKED.store(hwnd, Ordering::Relaxed);
+    }
+}
+
 /// Shapes a window to a rounded rectangle, in pixels. The island keeps one
 /// window size and changes this region instead of resizing: a resize makes
 /// Windows present a fresh surface for a frame, which shows as a white

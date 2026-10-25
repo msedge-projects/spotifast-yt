@@ -11695,13 +11695,20 @@ impl App {
             return;
         }
         // The island carries the taskbar button while the app is minimized.
-        // A click there minimizes the island window, which is the user
-        // asking for the app back. A minimized window never draws, so this
-        // is checked here, in the logic, not in the island's frame.
-        if self.island_window
+        // A click there is a message to the island's window, watched by
+        // window::watch_restore_request, and means "give me the app back";
+        // a minimized viewport is treated the same way. This is checked in
+        // the logic because a minimized window never draws.
+        #[cfg(windows)]
+        let restore = self.island_window
             && !self.switch_intent
-            && ctx.input(|input| input.viewport().minimized == Some(true))
-        {
+            && (musify::window::took_restore_request()
+                || ctx.input(|input| input.viewport().minimized == Some(true)));
+        #[cfg(not(windows))]
+        let restore = self.island_window
+            && !self.switch_intent
+            && ctx.input(|input| input.viewport().minimized == Some(true));
+        if restore {
             self.actions.push(Action::IslandToMain);
             ctx.request_repaint();
             return;
