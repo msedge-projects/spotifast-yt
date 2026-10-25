@@ -224,7 +224,6 @@ pub fn watch_restore_request(hwnd: isize) {
     }
     const GWLP_WNDPROC: i32 = -4;
     const WM_SYSCOMMAND: u32 = 0x0112;
-    const WM_ACTIVATEAPP: u32 = 0x001C;
     const SC_MINIMIZE: usize = 0xF020;
     const SC_RESTORE: usize = 0xF120;
     const SC_CLOSE: usize = 0xF060;
@@ -234,11 +233,10 @@ pub fn watch_restore_request(hwnd: isize) {
         wparam: usize,
         lparam: isize,
     ) -> isize {
-        // WM_ACTIVATEAPP arrives for deactivation too (wparam 0), which is
-        // any switch away; only becoming active is a request for the app.
-        if (msg == WM_ACTIVATEAPP && wparam != 0)
-            || (msg == WM_SYSCOMMAND && matches!(wparam, SC_MINIMIZE | SC_RESTORE | SC_CLOSE))
-        {
+        // Only the system-menu verbs are a taskbar click. WM_ACTIVATEAPP is
+        // not: it arrives when the window is created and whenever another
+        // app takes over, so reacting to it sent the island home by itself.
+        if msg == WM_SYSCOMMAND && matches!(wparam, SC_MINIMIZE | SC_RESTORE | SC_CLOSE) {
             crate::window::RESTORE_REQUESTED.store(true, Ordering::Relaxed);
         }
         CallWindowProcW(
