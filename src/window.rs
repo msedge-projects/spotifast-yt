@@ -236,8 +236,12 @@ pub fn watch_restore_request(hwnd: isize) {
         // Only the system-menu verbs are a taskbar click. WM_ACTIVATEAPP is
         // not: it arrives when the window is created and whenever another
         // app takes over, so reacting to it sent the island home by itself.
+        // The verb is swallowed: letting Windows minimize the island made
+        // the window ignore the close that follows, leaving no window at
+        // all. The app closes this window itself and opens the main one.
         if msg == WM_SYSCOMMAND && matches!(wparam, SC_MINIMIZE | SC_RESTORE | SC_CLOSE) {
             crate::window::RESTORE_REQUESTED.store(true, Ordering::Relaxed);
+            return 0;
         }
         CallWindowProcW(
             OLD_PROC.load(Ordering::Relaxed) as *mut core::ffi::c_void,
