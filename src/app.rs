@@ -11702,7 +11702,7 @@ impl App {
         #[cfg(windows)]
         let restore = self.island_window
             && !self.switch_intent
-            && (musify::window::took_restore_request()
+            && (crate::window::took_restore_request()
                 || ctx.input(|input| input.viewport().minimized == Some(true)));
         #[cfg(not(windows))]
         let restore = self.island_window
