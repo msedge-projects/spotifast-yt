@@ -254,6 +254,7 @@ pub fn watch_restore_request(hwnd: isize) {
         let old = SetWindowLongPtrW(hwnd as *mut core::ffi::c_void, GWLP_WNDPROC, proc as isize);
         OLD_PROC.store(old, Ordering::Relaxed);
         HOOKED.store(hwnd, Ordering::Relaxed);
+        log::info!("window {hwnd}: watching for a taskbar restore (old proc {old:#x})");
     }
 }
 

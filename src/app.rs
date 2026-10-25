@@ -11709,6 +11709,7 @@ impl App {
             && !self.switch_intent
             && ctx.input(|input| input.viewport().minimized == Some(true));
         if restore {
+            log::info!("island: the shell asked for the app back");
             self.actions.push(Action::IslandToMain);
             ctx.request_repaint();
             return;
