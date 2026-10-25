@@ -234,7 +234,9 @@ pub fn watch_restore_request(hwnd: isize) {
         wparam: usize,
         lparam: isize,
     ) -> isize {
-        if msg == WM_ACTIVATEAPP
+        // WM_ACTIVATEAPP arrives for deactivation too (wparam 0), which is
+        // any switch away; only becoming active is a request for the app.
+        if (msg == WM_ACTIVATEAPP && wparam != 0)
             || (msg == WM_SYSCOMMAND && matches!(wparam, SC_MINIMIZE | SC_RESTORE | SC_CLOSE))
         {
             crate::window::RESTORE_REQUESTED.store(true, Ordering::Relaxed);
